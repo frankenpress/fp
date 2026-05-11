@@ -31,6 +31,7 @@ See https://docs.frankenpress.com/components/fp for the full v1 design.`,
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newDoctorCmd())
 	cmd.AddCommand(newSnapshotCmd())
+	cmd.AddCommand(newPromoteCmd())
 
 	return cmd
 }
