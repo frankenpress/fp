@@ -11,7 +11,7 @@
 //
 //   - fp.snapshot/v1   — current; backward-compatible additions OK
 //   - fp.snapshot/v2   — created only when a backward-incompatible
-//                        change is unavoidable
+//     change is unavoidable
 //
 // `fp` refuses manifests with an unknown schema string up front.
 package manifest
@@ -50,12 +50,12 @@ type Author struct {
 // resolved against the manifest's containing directory; the apply
 // side uses db_sha256 to verify integrity before importing.
 type Contents struct {
-	DB                  string `json:"db" yaml:"db"`
-	DBSHA256            string `json:"db_sha256" yaml:"db_sha256"`
-	ComposerPatch       string `json:"composer_patch" yaml:"composer_patch"`
-	UploadsManifest     string `json:"uploads_manifest" yaml:"uploads_manifest"`
-	UploadsFileCount    int    `json:"uploads_file_count" yaml:"uploads_file_count"`
-	UploadsTotalBytes   int64  `json:"uploads_total_bytes" yaml:"uploads_total_bytes"`
+	DB                string `json:"db" yaml:"db"`
+	DBSHA256          string `json:"db_sha256" yaml:"db_sha256"`
+	ComposerPatch     string `json:"composer_patch" yaml:"composer_patch"`
+	UploadsManifest   string `json:"uploads_manifest" yaml:"uploads_manifest"`
+	UploadsFileCount  int    `json:"uploads_file_count" yaml:"uploads_file_count"`
+	UploadsTotalBytes int64  `json:"uploads_total_bytes" yaml:"uploads_total_bytes"`
 }
 
 // AdapterState is an open-ended map of per-adapter capture data.
