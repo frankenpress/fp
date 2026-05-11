@@ -28,13 +28,9 @@ Reads frankenpress.toml at the site repo root (or any ancestor of cwd) to
 find the snapshots bucket + gitops repo configuration. Uploads the
 snapshot's artefacts (manifest.yaml, manifest.json, composer-patch.json,
 uploads-manifest.txt, db.sql.gz) to s3://<snapshots.bucket>/snapshots/<id>/,
-then opens a gh issue against gitops.repo with the values bump the
-engineer needs to apply.
-
-v0.2.0 opens a gh issue rather than a real PR — the file-edit shape in
-the gitops repo varies enough across tenants that we want a human review
-gate before letting fp write to the gitops repo. v0.3.0 upgrades this to
-a true automated PR once the convention is stable.
+then clones the gitops repo, edits the applicationset.yaml matrix entry
+matching gitops.site_key, commits the snapshot bump, pushes a branch,
+and opens a PR for engineer review.
 
 If --snapshot-dir isn't passed, the most recent fp-snapshots/<slug>-* dir
 is used.`,
@@ -72,7 +68,7 @@ is used.`,
 			fmt.Fprintf(out, "[fp] gitops repo: %s (%s)\n", cfg.Gitops.Repo, cfg.Gitops.Applicationset)
 
 			if dryRun {
-				fmt.Fprintln(out, "\n[dry-run] no S3 upload, no gh issue create. Re-run without --dry-run when ready.")
+				fmt.Fprintln(out, "\n[dry-run] no S3 upload, no gitops PR. Re-run without --dry-run when ready.")
 				return nil
 			}
 
@@ -90,7 +86,7 @@ is used.`,
 			}
 			fmt.Fprintf(out, "[fp] uploaded to s3://%s/%s\n", cfg.Snapshots.Bucket, s3Key)
 
-			opener := promote.PROpener{
+			opener := promote.GitopsPR{
 				GitopsRepo:     cfg.Gitops.Repo,
 				Applicationset: cfg.Gitops.Applicationset,
 				SiteKey:        cfg.Gitops.SiteKey,
@@ -104,14 +100,14 @@ is used.`,
 			}
 
 			fmt.Fprintln(out)
-			fmt.Fprintf(out, "promote request opened: %s\n", url)
-			fmt.Fprintln(out, "next: engineer reviews the issue, applies the values bump in the gitops repo, merges → ArgoCD reconciles.")
+			fmt.Fprintf(out, "promote PR opened: %s\n", url)
+			fmt.Fprintln(out, "next: engineer reviews the PR (composer.json deltas + applicationset.yaml bump), merges → ArgoCD reconciles → install Job's `wp fp apply` runs.")
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&snapshotDir, "snapshot-dir", "", "Snapshot directory to promote. Defaults to the most recent fp-snapshots/* entry under cwd.")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Read config + manifest, print the planned actions; no S3 upload, no gh issue create.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Read config + manifest, print the planned actions; no S3 upload, no gh pr create.")
 
 	return cmd
 }

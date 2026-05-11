@@ -1,32 +1,27 @@
 // Package promote orchestrates `fp promote stg|prd <snapshot>`.
 //
-// Three pieces:
+// Pieces:
 //
-//   - Uploader  — pushes snapshot artefacts to the configured S3
+//   - Uploader   — pushes snapshot artefacts to the configured S3
 //     bucket via the awscli (shells out; matches the
 //     Phase-0 Makefile pattern designers already use).
-//   - PROpener  — opens a PR against the configured gitops repo
-//     (shells out to `gh pr create`); the PR body is
-//     produced by the gitops_change package.
-//   - Promoter  — drives the workflow end-to-end and returns the
-//     promote outcome (PR URL + s3 keys).
+//   - GitopsPR   — clones the gitops repo, edits the applicationset
+//     via EditApplicationSet, commits + pushes + opens
+//     a real PR via `gh pr create`.
+//   - Env        — promote target enum (stg / prd).
 //
 // Cosign signing of the manifest + the second PR against the site
-// repo (composer-patch.json review) land in v0.3.0 / v0.4.0. The
-// v0.2.0 surface is deliberately tight: get the blob upload + the
-// gitops PR open paths working before adding the next layers.
+// repo (composer-patch.json review) land in v0.4 / v0.5. Manifest
+// schema parsing lives in pkg/manifest.
 package promote
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/frankenpress/fp/pkg/manifest"
 )
@@ -136,107 +131,4 @@ func (u *Uploader) Upload(ctx context.Context, snapshotDir, snapshotID string) (
 	}
 
 	return prefix, nil
-}
-
-// PROpener opens a PR against the gitops repo with the
-// `siteInstall.snapshot` values bump for the requested env.
-type PROpener struct {
-	GitopsRepo     string // "owner/name"
-	Applicationset string // relative path inside the gitops repo
-	SiteKey        string // matrix entry key
-	Bucket         string // S3 bucket name (echoed in the PR body)
-
-	// Stdout / Stderr receive gh CLI output. Stdout (specifically) is
-	// captured for the returned PR URL — gh prints it as the last
-	// line of its successful create output.
-	Stdout io.Writer
-	Stderr io.Writer
-}
-
-// Open opens the gitops-fp PR. Phase 2.0 emits a structured body that
-// the engineer manually applies (gitops-fp owns its own values-file
-// layout; we don't want fp to clone/edit/push a remote repo from a
-// designer's laptop without explicit per-tenant config). Phase 2.1
-// promotes this to a true automated PR open via `gh api` + repo
-// editing once the path conventions stabilise.
-//
-// Returns the URL of the opened PR (or empty + error on failure).
-func (p *PROpener) Open(ctx context.Context, env Env, snapshotID, s3Key string) (string, error) {
-	if !env.Valid() {
-		return "", fmt.Errorf("promote: invalid env %q (must be stg or prd)", env)
-	}
-	if p.GitopsRepo == "" {
-		return "", fmt.Errorf("promote: gitops repo is empty (gitops.repo in frankenpress.toml)")
-	}
-
-	body := p.renderBody(env, snapshotID, s3Key)
-
-	title := fmt.Sprintf("%s(%s): bump snapshot to %s", p.SiteKey, env, snapshotID)
-
-	// For v0.2.0 we use `gh issue create` rather than `gh pr create`:
-	// opening a real PR requires us to checkout the repo, edit the
-	// file, push a branch — that's structural work the gitops repo
-	// owner should sign off on for each tenant. An issue captures the
-	// promote request reviewably; the engineer flips it to a PR in
-	// gitops-fp manually for the first iteration. Phase 2.1 upgrades
-	// this to a full automated PR open.
-	cmd := exec.CommandContext(ctx, "gh", "issue", "create",
-		"--repo", p.GitopsRepo,
-		"--title", title,
-		"--body", body,
-	)
-	var stdoutBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	if p.Stderr != nil {
-		cmd.Stderr = p.Stderr
-	}
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("promote: `gh issue create`: %w", err)
-	}
-	if p.Stdout != nil {
-		_, _ = p.Stdout.Write(stdoutBuf.Bytes())
-	}
-
-	url := strings.TrimSpace(stdoutBuf.String())
-	// gh prints the URL as the last non-empty line.
-	if idx := strings.LastIndex(url, "\n"); idx >= 0 {
-		url = strings.TrimSpace(url[idx+1:])
-	}
-	return url, nil
-}
-
-func (p *PROpener) renderBody(env Env, snapshotID, s3Key string) string {
-	values := map[string]any{
-		"site": p.SiteKey,
-		"env":  string(env),
-		"snapshot": map[string]string{
-			"ref":    snapshotID,
-			"s3Key":  s3Key,
-			"bucket": p.Bucket,
-		},
-	}
-	jsonBody, _ := json.MarshalIndent(values, "", "  ")
-
-	return fmt.Sprintf(`Promote request from fp (v0.2.0).
-
-Bump `+"`"+`siteInstall.snapshot`+"`"+` in `+"`%s`"+` for `+"`%s`"+`:
-
-`+"```yaml"+`
-siteInstall:
-  snapshot:
-    ref:    %q
-    s3Key:  %q
-    bucket: %q
-`+"```"+`
-
-Structured form (for any tooling that wants to consume this):
-
-`+"```json"+`
-%s
-`+"```"+`
-
-Blobs already uploaded to `+"`s3://%s/%s`"+`. Once this is merged + ArgoCD reconciles, the install Job's `+"`wp fp apply`"+` step will pull them down and stamp the idempotency markers (`+"`fp_snapshot_applied_ref`"+` + `+"`fp_snapshot_applied_sha256`"+`).
-
-(Phase 2.1 of the fp design upgrades this issue into a real PR opened against the values file; v0.2.0 leaves the file-edit step to the engineer because the YAML structure varies per gitops layout.)
-`, p.Applicationset, env, snapshotID, s3Key, p.Bucket, string(jsonBody), p.Bucket, s3Key)
 }
