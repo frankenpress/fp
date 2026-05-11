@@ -1,0 +1,20 @@
+# Build artefacts
+/fp
+/dist/
+*.test
+*.out
+
+# Coverage
+coverage.out
+coverage.html
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Goreleaser
+.goreleaser/
+
+# Local snapshots (when fp is run inside its own checkout)
+fp-snapshots/

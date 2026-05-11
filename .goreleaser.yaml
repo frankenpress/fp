@@ -1,0 +1,75 @@
+# goreleaser config for the fp binary.
+#
+# Builds linux+darwin amd64+arm64, signs every artifact with cosign
+# keyless OIDC (Sigstore), and publishes a GitHub Release with
+# checksums + the cosign bundle. The Homebrew tap PR is opened by a
+# follow-up workflow once `frankenpress/homebrew-tap` exists; that's
+# Phase 6 polish.
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: fp
+    main: ./cmd/fp
+    binary: fp
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/frankenpress/fp/internal/version.Version={{.Version}}
+      - -X github.com/frankenpress/fp/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/frankenpress/fp/internal/version.BuildDate={{.Date}}
+
+archives:
+  - id: fp
+    name_template: "fp_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: ["tar.gz"]
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^chore:"
+      - "^docs:"
+      - "Merge pull request"
+      - "Merge branch"
+
+signs:
+  - cmd: cosign
+    artifacts: all
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - "sign-blob"
+      - "--oidc-issuer=https://token.actions.githubusercontent.com"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+
+release:
+  github:
+    owner: frankenpress
+    name: fp
+  prerelease: auto
+  draft: false

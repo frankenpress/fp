@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docs.frankenpress.com/schemas/fp.snapshot/v1.json",
+  "title": "FrankenPress snapshot manifest",
+  "description": "fp.snapshot/v1 — the artifact produced by wp fp snapshot and consumed by fp / wp fp apply. Pairs with the Go types in pkg/manifest/types.go and the PHP emitter in frankenpress/mu-plugin's src/Cli/Snapshot/Manifest.php.",
+  "type": "object",
+  "required": ["schema", "id", "created", "source", "contents", "adapters_fired"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "fp.snapshot/v1"
+    },
+    "id": {
+      "type": "string",
+      "description": "Snapshot identifier: <slug>-<UTC-stamp>. Used as the idempotency key on the apply side (wp_options.fp_snapshot_applied_ref).",
+      "pattern": "^[a-z0-9-]+$",
+      "minLength": 1
+    },
+    "created": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp the snapshot was captured at.",
+      "format": "date-time"
+    },
+    "source": {
+      "type": "object",
+      "required": ["site_url", "wp_version", "active_theme"],
+      "additionalProperties": false,
+      "properties": {
+        "site_url":     { "type": "string", "description": "home_url() at capture time. Apply side runs `wp search-replace <this> <target>`." },
+        "wp_version":   { "type": "string" },
+        "active_theme": { "type": "string", "description": "stylesheet slug at capture time." }
+      }
+    },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "note": { "type": "string" }
+      }
+    },
+    "adapters_fired": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Names of premium-theme adapters that fired during capture. The apply side dispatches to the matching adapter's post_restore() hook for each entry."
+    },
+    "contents": {
+      "type": "object",
+      "required": ["db", "db_sha256", "composer_patch", "uploads_manifest"],
+      "additionalProperties": false,
+      "properties": {
+        "db":                   { "type": "string", "description": "Filename within the snapshot directory.", "const": "db.sql.gz" },
+        "db_sha256":            { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "composer_patch":       { "type": "string", "const": "composer-patch.json" },
+        "uploads_manifest":     { "type": "string", "const": "uploads-manifest.txt" },
+        "uploads_file_count":   { "type": "integer", "minimum": 0 },
+        "uploads_total_bytes":  { "type": "integer", "minimum": 0 }
+      }
+    },
+    "adapter_state": {
+      "type": "object",
+      "description": "Per-adapter capture data keyed by adapter name. Inner shape is adapter-defined (the v1 schema does not constrain it).",
+      "additionalProperties": { "type": "object" }
+    },
+    "composer_patch_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pending_count":    { "type": "integer", "minimum": 0 },
+        "unresolved_count": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
