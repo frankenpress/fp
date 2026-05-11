@@ -73,8 +73,8 @@ func TestLoadManifestRejectsBadSchema(t *testing.T) {
 	}
 }
 
-func TestPROpenerRendersBodyShape(t *testing.T) {
-	p := PROpener{
+func TestGitopsPRRendersBodyShape(t *testing.T) {
+	p := GitopsPR{
 		GitopsRepo:     "aypex-io/gitops-fp",
 		Applicationset: "apps/applicationset.yaml",
 		SiteKey:        "sts",
@@ -83,13 +83,13 @@ func TestPROpenerRendersBodyShape(t *testing.T) {
 	body := p.renderBody(EnvStaging, "architect-2-20260511-091422", "snapshots/architect-2-20260511-091422/")
 
 	for _, needle := range []string{
-		"siteInstall:",
 		"snapshot:",
 		"architect-2-20260511-091422",
 		"snapshots/architect-2-20260511-091422/",
 		"sts-snapshots",
 		"apps/applicationset.yaml",
 		"fp_snapshot_applied_ref",
+		"site: sts",
 	} {
 		if !strings.Contains(body, needle) {
 			t.Errorf("rendered body missing %q\n--- body ---\n%s", needle, body)
