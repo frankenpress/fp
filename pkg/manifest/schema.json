@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://docs.frankenpress.com/schemas/fp.snapshot/v1.json",
-  "title": "FrankenPress snapshot manifest",
-  "description": "fp.snapshot/v1 — the artifact produced by wp fp snapshot and consumed by fp / wp fp apply. Pairs with the Go types in pkg/manifest/types.go and the PHP emitter in frankenpress/mu-plugin's src/Cli/Snapshot/Manifest.php.",
+  "$id": "https://docs.frankenpress.com/schemas/fp.snapshot/v2.json",
+  "title": "FrankenPress snapshot manifest (v2)",
+  "description": "fp.snapshot/v2 — adapter-scoped, WXR-based snapshot manifest. Replaces v1 (SQL-dump-based, full-replace apply) with an additive shape that's safe to run against live sites. Pairs with frankenpress/mu-plugin v0.8.0's wp fp snapshot/apply.",
   "type": "object",
-  "required": ["schema", "id", "created", "source", "contents", "adapters_fired"],
+  "required": ["schema", "id", "created", "source", "adapters_fired", "scope", "contents"],
   "additionalProperties": false,
   "properties": {
     "schema": {
       "type": "string",
-      "const": "fp.snapshot/v1"
+      "const": "fp.snapshot/v2"
     },
     "id": {
       "type": "string",
@@ -29,7 +29,7 @@
       "properties": {
         "site_url":     { "type": "string", "description": "home_url() at capture time. Apply side runs `wp search-replace <this> <target>`." },
         "wp_version":   { "type": "string" },
-        "active_theme": { "type": "string", "description": "stylesheet slug at capture time." }
+        "active_theme": { "type": "string" }
       }
     },
     "author": {
@@ -43,15 +43,52 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true,
-      "description": "Names of premium-theme adapters that fired during capture. The apply side dispatches to the matching adapter's post_restore() hook for each entry."
+      "description": "Adapter names that fired during capture. Apply dispatches to post_apply() per entry."
+    },
+    "scope": {
+      "type": "object",
+      "description": "The declarative blast radius of the snapshot — the union of every fired adapter's SnapshotScope. Apply will never touch anything outside this scope.",
+      "required": ["post_types_with_marker", "post_types_full_capture", "option_patterns", "theme_mods_for", "documented_exclusions"],
+      "additionalProperties": false,
+      "properties": {
+        "post_types_with_marker":  {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Map of post_type → required postmeta key. Only posts matching both go into the WXR."
+        },
+        "post_types_full_capture": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Post types where every row is captured (e.g. nav_menu_item, wp_template)."
+        },
+        "option_patterns":         {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "MySQL LIKE patterns for wp_options.option_name. Matched options go into options.json."
+        },
+        "theme_mods_for":          {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Stylesheet slugs whose theme_mods_<slug> are captured."
+        },
+        "documented_exclusions":   {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Documentation-only list of tables / row patterns this snapshot's scope intentionally never touches. Surfaced in PR review."
+        }
+      }
     },
     "contents": {
       "type": "object",
-      "required": ["db", "db_sha256", "composer_patch", "uploads_manifest"],
+      "required": ["wxr", "wxr_sha256", "options", "options_sha256", "composer_patch", "uploads_manifest"],
       "additionalProperties": false,
       "properties": {
-        "db":                   { "type": "string", "description": "Filename within the snapshot directory.", "const": "db.sql.gz" },
-        "db_sha256":            { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "wxr":                  { "type": "string", "const": "content.xml.gz" },
+        "wxr_sha256":           { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "wxr_post_count":       { "type": "integer", "minimum": 0 },
+        "options":              { "type": "string", "const": "options.json" },
+        "options_sha256":       { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "options_count":        { "type": "integer", "minimum": 0 },
         "composer_patch":       { "type": "string", "const": "composer-patch.json" },
         "uploads_manifest":     { "type": "string", "const": "uploads-manifest.txt" },
         "uploads_file_count":   { "type": "integer", "minimum": 0 },
@@ -60,7 +97,6 @@
     },
     "adapter_state": {
       "type": "object",
-      "description": "Per-adapter capture data keyed by adapter name. Inner shape is adapter-defined (the v1 schema does not constrain it).",
       "additionalProperties": { "type": "object" }
     },
     "composer_patch_summary": {

@@ -25,14 +25,6 @@ tenant = "EightOEight"
 name   = "sts"
 repo   = "EightOEight/sts"
 
-[snapshots]
-bucket = "sts-snapshots"
-
-[gitops]
-repo           = "aypex-io/gitops-fp"
-applicationset = "apps/applicationset.yaml"
-site_key       = "sts"
-
 [signers]
 identities = ["m.kennedy@aypex.io"]
 `)
@@ -45,11 +37,8 @@ identities = ["m.kennedy@aypex.io"]
 	if cfg.Site.Name != "sts" {
 		t.Errorf("Site.Name = %q", cfg.Site.Name)
 	}
-	if cfg.Snapshots.Bucket != "sts-snapshots" {
-		t.Errorf("Snapshots.Bucket = %q", cfg.Snapshots.Bucket)
-	}
-	if cfg.Gitops.Repo != "aypex-io/gitops-fp" {
-		t.Errorf("Gitops.Repo = %q", cfg.Gitops.Repo)
+	if cfg.Site.Repo != "EightOEight/sts" {
+		t.Errorf("Site.Repo = %q", cfg.Site.Repo)
 	}
 	if len(cfg.Signers.Identities) != 1 || cfg.Signers.Identities[0] != "m.kennedy@aypex.io" {
 		t.Errorf("Signers.Identities = %v", cfg.Signers.Identities)
@@ -66,12 +55,6 @@ func TestLoadWalksUpToParent(t *testing.T) {
 [site]
 name = "x"
 repo = "o/x"
-[snapshots]
-bucket = "b"
-[gitops]
-repo = "o/g"
-applicationset = "a.yaml"
-site_key = "x"
 `)
 
 	nested := filepath.Join(root, "deeply", "nested", "subdir")
@@ -99,20 +82,46 @@ func TestLoadNotFound(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsUnknownKeys(t *testing.T) {
+func TestLoadRejectsStaleSnapshotsSection(t *testing.T) {
+	// v0.3.x carried [snapshots] + [gitops]; v0.4.0 dropped both.
+	// The strict-undecoded check catches stale configs with a clear
+	// hint about the migration.
 	dir := t.TempDir()
 	writeConfig(t, dir, `
 [site]
 name = "x"
-unexpected_field = "typo"
+repo = "o/x"
+
+[snapshots]
+bucket = "x-snapshots"
 `)
 
 	_, err := Load(dir)
 	if err == nil {
-		t.Fatal("expected error for unknown key, got nil")
+		t.Fatal("expected error for stale [snapshots] section")
 	}
 	if !strings.Contains(err.Error(), "unknown keys") {
 		t.Errorf("error should mention unknown keys; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "fp v0.4.0") {
+		t.Errorf("error should hint at the migration; got %v", err)
+	}
+}
+
+func TestLoadRejectsStaleGitopsSection(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, `
+[site]
+name = "x"
+repo = "o/x"
+
+[gitops]
+repo = "x/gitops"
+`)
+
+	_, err := Load(dir)
+	if err == nil {
+		t.Fatal("expected error for stale [gitops] section")
 	}
 }
 
@@ -120,7 +129,7 @@ func TestValidateReportsMissingFields(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, `
 [site]
-name = "x"
+tenant = "EightOEight"
 `)
 
 	cfg, err := Load(dir)
@@ -132,7 +141,7 @@ name = "x"
 		t.Fatal("expected validation error")
 	}
 	msg := verr.Error()
-	for _, key := range []string{"site.repo", "snapshots.bucket", "gitops.repo", "gitops.applicationset", "gitops.site_key"} {
+	for _, key := range []string{"site.name", "site.repo"} {
 		if !strings.Contains(msg, key) {
 			t.Errorf("error should mention %q; got %v", key, msg)
 		}

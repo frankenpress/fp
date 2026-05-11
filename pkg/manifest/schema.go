@@ -11,8 +11,7 @@ import (
 var SchemaJSON []byte
 
 // SchemaDocument unmarshals the embedded JSON Schema into a generic
-// map. Tools that want to do their own validation (a future
-// `fp doctor` schema check, IDE integrations) can consume it.
+// map. Tools that want to do their own validation can consume it.
 func SchemaDocument() (map[string]any, error) {
 	var doc map[string]any
 	if err := json.Unmarshal(SchemaJSON, &doc); err != nil {
@@ -28,18 +27,22 @@ func SchemaDocument() (map[string]any, error) {
 var ErrUnsupportedSchema = errors.New("manifest: unsupported schema version")
 
 // Parse decodes raw JSON manifest bytes into a Manifest and validates
-// the schema field is one this build accepts. Deeper field-level
-// validation against schema.json is intentionally not done here —
-// Phase 2 of the CLI plan adds a santhosh-tekuri/jsonschema pass for
-// that, when promote starts shipping the manifest to untrusted
-// destinations.
+// the schema field is one this build accepts.
+//
+// Returns an explicit migration error for the now-deprecated v1
+// schema — fp v0.4.0+ refuses v1 manifests because they predate the
+// adapter-scope safety boundary.
 func Parse(raw []byte) (*Manifest, error) {
 	var m Manifest
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil, fmt.Errorf("manifest: invalid JSON: %w", err)
 	}
-	if m.Schema != SchemaV1 {
-		return nil, fmt.Errorf("%w: got %q, this fp accepts %q", ErrUnsupportedSchema, m.Schema, SchemaV1)
+	switch m.Schema {
+	case SchemaV2:
+		return &m, nil
+	case SchemaV1:
+		return nil, fmt.Errorf("%w: v1 manifests are no longer accepted; v1 used a full-replace apply path that could destroy live-site data. Re-capture with mu-plugin v0.8.0+ (which emits v2 — adapter-scoped, additive)", ErrUnsupportedSchema)
+	default:
+		return nil, fmt.Errorf("%w: got %q, this fp accepts %q", ErrUnsupportedSchema, m.Schema, SchemaV2)
 	}
-	return &m, nil
 }

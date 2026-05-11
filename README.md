@@ -25,16 +25,67 @@ brew install frankenpress/tap/fp
 # https://github.com/frankenpress/fp/releases
 ```
 
-## Subcommands (v0.1)
+## Subcommands
 
-| Command | Phase | Purpose |
-|---|---|---|
-| `fp version` | 1 | Binary + manifest schema version |
-| `fp doctor` | 1 | Pre-flight environment checks (docker, gh, git, aws, jq) |
-| `fp snapshot --name=<slug>` | 1 | Capture local site state — wraps `wp fp snapshot` inside the running site container |
+| Command | Purpose |
+|---|---|
+| `fp version` | Binary + manifest schema version |
+| `fp doctor` | Pre-flight environment checks (docker, gh, git, aws, jq) |
+| `fp snapshot --name=<slug>` | Capture local site state into `web/imports/<slug>/` — wraps `wp fp snapshot` inside the running site container |
 
-Phase 2+ adds `fp promote` / `fp restore` / `fp diff` / `fp adapters`; see the
-plan for the full v1 trajectory.
+Phase 3+ will add `fp restore` (round-trip a remote snapshot back into LDE for
+iteration). `fp promote` was removed in v0.4 — snapshots are now image-baked
+artefacts committed into the site repo at `web/imports/<slug>/` and shipped via
+normal git PRs, so no separate promote command is needed (see "design pivot in
+v0.4" below).
+
+## Designer workflow
+
+```bash
+make up
+# (designer runs theme demo importer in wp-admin, tweaks content)
+
+fp snapshot --name=architect-2 --note="The7 FSE Architect demo"
+# → web/imports/architect-2/{manifest.yaml,content.xml.gz,options.json,...}
+
+# Review the manifest + composer-patch.json
+cat web/imports/architect-2/manifest.yaml
+cat web/imports/architect-2/composer-patch.json
+
+# composer require any pending plugins
+composer require wpackagist-plugin/<slug>
+
+# Commit + open site-repo PR
+git add web/imports/architect-2/ composer.json composer.lock
+git commit -m "Add architect-2 design import"
+gh pr create
+```
+
+Engineer reviews the WXR + options + manifest like any other code. Merge →
+CI builds new site image with `web/imports/<slug>/` baked in → tag → ArgoCD
+reconciles → chart's install Job iterates `/app/web/imports/*` and runs
+`wp fp apply` per snapshot dir. Idempotency markers (`fp_snapshot_applied_ref`
++ `fp_snapshot_applied_sha256`) short-circuit re-application.
+
+## Design pivot in v0.4
+
+v0.1-v0.3 used a different model: snapshots uploaded to S3, separate
+gitops-fp PR with a `siteInstall.snapshot.ref` bump. That design had two
+problems:
+
+- **Two PRs per promote.** Designer overhead + coordination across repos.
+- **`wp db import`-based apply was destructive.** A snapshot apply replaced the
+  whole DB, which would clobber any data that accumulated in production
+  while the designer was working locally (e.g. WooCommerce orders).
+
+v0.4 (+ frankenpress/mu-plugin v0.8.0 + frankenpress/charts v0.9.0) pivots to
+**image-baked snapshots + adapter-scoped additive apply.** Snapshots live in
+the site repo at `web/imports/<slug>/`, get committed and reviewed as normal
+code, and apply uses WP-Importer (additive — never DROP/DELETE/TRUNCATE). The
+scope of each snapshot is declared by a premium-theme adapter (The7 first;
+Avada/Divi later), so by construction a snapshot can only carry rows the
+adapter knew about. WooCommerce orders, user accounts, comments — never in
+scope, never touched.
 
 ## Pairs with
 

@@ -25,26 +25,36 @@ func newSnapshotCmd() *cobra.Command {
 		Short: "Capture local site state into a portable snapshot bundle",
 		Long: `Runs ` + "`wp fp snapshot`" + ` inside the running site container,
 producing a snapshot directory containing manifest.yaml, manifest.json,
-db.sql.gz (sanitised), composer-patch.json, and uploads-manifest.txt.
+content.xml.gz (WXR), options.json, composer-patch.json, and
+uploads-manifest.txt.
 
-The snapshot directory lands under <site-root>/fp-snapshots/<slug>-<utc-stamp>/
-by default; override with --output-dir. The site must be up (` + "`make up`" + `).
+The snapshot directory lands at <site-root>/web/imports/<slug>/ by
+default — versioned alongside the rest of the site code in git, baked
+into the site image at build time. Override with --output-dir for
+non-standard layouts. The site must be up (` + "`make up`" + `).
 
 Designer workflow:
 
   1. fp snapshot --name=architect-2 --note="The7 FSE Architect demo"
-  2. Review fp-snapshots/architect-2-<stamp>/manifest.yaml + composer-patch.json
-  3. make promote SLUG=architect-2 ENV=stg   (Phase 0 W2; fp promote in Phase 2)`,
+  2. Review web/imports/architect-2/manifest.yaml + composer-patch.json
+  3. composer require any pending plugins
+  4. git add web/imports/architect-2/ composer.json composer.lock
+  5. git commit + open a site-repo PR — engineer reviews, merges
+  6. CI rebuilds the site image; ArgoCD reconciles; install Job runs
+     ` + "`wp fp apply`" + ` per snapshot subdir on the cluster side.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required (e.g. --name=architect-2)")
 			}
 
-			stamp := time.Now().UTC().Format("20060102-150405")
 			safeName := safeSlug(name)
+			if safeName == "" {
+				return fmt.Errorf("--name %q produced an empty safe slug; pick a name with at least one alphanumeric character", name)
+			}
+
 			dir := outputDir
 			if dir == "" {
-				dir = filepath.Join("fp-snapshots", safeName+"-"+stamp)
+				dir = filepath.Join("web", "imports", safeName)
 			}
 
 			runner := wpcli.Runner{ComposeService: service, WordPressPath: wpPath}
@@ -73,9 +83,11 @@ Designer workflow:
 
 			fmt.Fprintln(cmd.OutOrStdout())
 			fmt.Fprintf(cmd.OutOrStdout(), "snapshot written to %s/\n", dir)
-			fmt.Fprintln(cmd.OutOrStdout(), "next step (Phase 0):")
-			fmt.Fprintf(cmd.OutOrStdout(), "  make promote SLUG=%s ENV=stg\n", name)
-			fmt.Fprintln(cmd.OutOrStdout(), "(Phase 2 ships `fp promote` and replaces the Makefile target.)")
+			fmt.Fprintln(cmd.OutOrStdout(), "next steps:")
+			fmt.Fprintf(cmd.OutOrStdout(), "  cat %s/manifest.yaml      # review what was captured\n", dir)
+			fmt.Fprintf(cmd.OutOrStdout(), "  cat %s/composer-patch.json # composer require any pending plugins\n", dir)
+			fmt.Fprintf(cmd.OutOrStdout(), "  git add %s composer.json composer.lock\n", dir)
+			fmt.Fprintln(cmd.OutOrStdout(), "  git commit && gh pr create")
 
 			return nil
 		},
@@ -83,7 +95,7 @@ Designer workflow:
 
 	cmd.Flags().StringVar(&name, "name", "", "Snapshot slug (lowercase + hyphens, e.g. \"architect-2\"). Required.")
 	cmd.Flags().StringVar(&note, "note", "", "Optional designer note embedded in the manifest.")
-	cmd.Flags().StringVar(&outputDir, "output-dir", "", "Host-side output directory (relative paths are relative to the site repo). Defaults to fp-snapshots/<slug>-<utc-stamp>.")
+	cmd.Flags().StringVar(&outputDir, "output-dir", "", "Host-side output directory (relative paths are relative to the site repo). Defaults to web/imports/<slug>/.")
 	cmd.Flags().StringVar(&service, "compose-service", "site", "docker-compose service name running the site container.")
 	cmd.Flags().StringVar(&wpPath, "wp-path", "/app/web/wp", "In-container path to the WordPress install (--path argument to wp-cli).")
 
