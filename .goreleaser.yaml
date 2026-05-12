@@ -1,0 +1,101 @@
+version: 2
+
+project_name: fp
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: fp
+    main: ./cmd/fp
+    binary: fp
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/frankenpress/fp/internal/version.Version={{.Version}}
+      - -X github.com/frankenpress/fp/internal/version.Commit={{.FullCommit}}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: fp
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+signs:
+  - id: cosign
+    cmd: cosign
+    artifacts: checksum
+    output: true
+    certificate: "${artifact}.pem"
+    signature: "${artifact}.sig"
+    args:
+      - sign-blob
+      - --yes
+      - --output-certificate=${certificate}
+      - --output-signature=${signature}
+      - ${artifact}
+
+sboms:
+  - id: spdx
+    artifacts: archive
+    cmd: syft
+    args: ["$artifact", "--output", "spdx-json=$document"]
+    documents:
+      - "{{ .ArtifactName }}.spdx.json"
+
+brews:
+  - name: fp
+    repository:
+      owner: frankenpress
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/frankenpress/fp"
+    description: "FrankenPress designer-promotion CLI"
+    license: "Apache-2.0"
+    commit_author:
+      name: frankenpress-bot
+      email: noreply@frankenpress.com
+    test: |
+      assert_match "fp", shell_output("#{bin}/fp version")
+    install: |
+      bin.install "fp"
+
+release:
+  github:
+    owner: frankenpress
+    name: fp
+  draft: false
+  prerelease: auto
+  name_template: "{{.Version}}"
+  footer: |
+    ## Verification
+
+    Every release artefact is signed via cosign keyless OIDC. To verify:
+
+    ```bash
+    cosign verify-blob \
+      --certificate-identity-regexp "https://github.com/frankenpress/fp/.github/workflows/release.yaml@.*" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --cert checksums.txt.pem \
+      --signature checksums.txt.sig \
+      checksums.txt
+    ```

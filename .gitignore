@@ -1,0 +1,16 @@
+# Built binary
+/fp
+/fp.exe
+
+# goreleaser output
+/dist/
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Local mise overrides
+.mise.local.toml
