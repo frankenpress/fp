@@ -69,7 +69,8 @@ Run with --quick for an ad-hoc capture with a timestamped slug and no prompts;
 				Project:     project,
 			}
 
-			return snapshot.Run(cmd.Context(), opts)
+			_, err = snapshot.Run(cmd.Context(), opts)
+			return err
 		},
 	}
 

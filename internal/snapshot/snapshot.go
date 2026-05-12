@@ -56,10 +56,20 @@ type Options struct {
 	Now func() time.Time
 }
 
-// Run executes the snapshot pipeline. Returns nil on success;
-// errors are designed to be readable in a terminal (see Error UX in
-// the plan).
-func Run(ctx context.Context, opts Options) error {
+// Result carries the resolved slug + note + manifest path after a
+// successful capture so composing callers (fp release) can reference
+// them without re-deriving.
+type Result struct {
+	Slug         string
+	Note         string
+	ManifestPath string // absolute host path to manifest.yaml
+}
+
+// Run executes the snapshot pipeline. Returns the resolved slug + note
+// + manifest path on success; on failure returns a non-nil error with
+// a partially-populated *Result (or nil) and an error designed to be
+// readable in a terminal (see Error UX in the plan).
+func Run(ctx context.Context, opts Options) (*Result, error) {
 	if opts.Now == nil {
 		opts.Now = func() time.Time { return time.Now().UTC() }
 	}
@@ -79,13 +89,13 @@ func Run(ctx context.Context, opts Options) error {
 	// Slug resolution — cascade + prompt (unless --quick or --slug).
 	slug, err := resolveSlug(opts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Note resolution.
 	note, err := resolveNote(opts, slug)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	hostTargetDir := filepath.Join(opts.RepoRoot, outputDir, slug)
@@ -97,11 +107,11 @@ func Run(ctx context.Context, opts Options) error {
 		rel := filepath.Join(outputDir, slug)
 		dirty, err := repo.HasUncommittedChanges(opts.RepoRoot, rel)
 		if err != nil {
-			return fmt.Errorf("git status check failed: %w", err)
+			return nil, fmt.Errorf("git status check failed: %w", err)
 		}
 		if dirty {
 			if !opts.Interactive {
-				return fmt.Errorf(
+				return nil, fmt.Errorf(
 					"%s has uncommitted changes; refusing to overwrite. commit/stash first, or pass --quick",
 					rel,
 				)
@@ -111,10 +121,10 @@ func Run(ctx context.Context, opts Options) error {
 				fmt.Sprintf("%s/ has uncommitted changes. overwriting will lose them. continue?", rel),
 			)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if !ok {
-				return errors.New("aborted")
+				return nil, errors.New("aborted")
 			}
 		}
 	}
@@ -122,22 +132,22 @@ func Run(ctx context.Context, opts Options) error {
 	// Stack up-check.
 	status, container, err := compose.Check(ctx, opts.Runner, project, service)
 	if err != nil {
-		return fmt.Errorf("docker compose ps failed: %w", err)
+		return nil, fmt.Errorf("docker compose ps failed: %w", err)
 	}
 	if status != compose.StatusServiceRunning {
-		return errors.New(compose.FormatNotRunning(status, project, service))
+		return nil, errors.New(compose.FormatNotRunning(status, project, service))
 	}
 	if container == nil {
-		return fmt.Errorf("docker compose reported %q running but returned no container metadata", service)
+		return nil, fmt.Errorf("docker compose reported %q running but returned no container metadata", service)
 	}
 
 	// Pre-clean host target — designers rely on the committed dir
 	// being a clean reflection of the latest capture.
 	if err := os.RemoveAll(hostTargetDir); err != nil {
-		return fmt.Errorf("pre-clean %s: %w", hostTargetDir, err)
+		return nil, fmt.Errorf("pre-clean %s: %w", hostTargetDir, err)
 	}
 	if err := os.MkdirAll(hostOutputParent, 0o755); err != nil {
-		return fmt.Errorf("ensure %s: %w", hostOutputParent, err)
+		return nil, fmt.Errorf("ensure %s: %w", hostOutputParent, err)
 	}
 
 	// Run wp fp snapshot. Streaming stdout+stderr so designers see
@@ -167,7 +177,7 @@ func Run(ctx context.Context, opts Options) error {
 		// to diagnose.
 		fmt.Fprintf(opts.Stderr, "error: wp fp snapshot exited %d. See wp-cli output above for the verbatim message.\n", exitCode)
 		fmt.Fprintln(opts.Stderr, "hint: if the error is \"no snapshot adapter detected\", activate an FSE block theme in WP admin then retry.")
-		return errors.New("wp fp snapshot failed")
+		return nil, errors.New("wp fp snapshot failed")
 	}
 
 	// Extract the snapshot out of the container.
@@ -176,7 +186,7 @@ func Run(ctx context.Context, opts Options) error {
 		fmt.Fprintf(opts.Stderr, "error: docker cp %s %s failed: %v\n", src, hostOutputParent, err)
 		fmt.Fprintf(opts.Stderr, "hint: snapshot was written inside the container at %s; you can copy it manually with:\n", containerTargetDir)
 		fmt.Fprintf(opts.Stderr, "      docker cp %s %s\n", src, hostOutputParent)
-		return errors.New("docker cp failed")
+		return nil, errors.New("docker cp failed")
 	}
 
 	// Print the post-capture summary.
@@ -185,7 +195,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		// Hard fail — if the manifest isn't there, the snapshot
 		// effectively didn't land.
-		return fmt.Errorf("read manifest at %s: %w", manifestPath, err)
+		return nil, fmt.Errorf("read manifest at %s: %w", manifestPath, err)
 	}
 	fmt.Fprintln(opts.Stdout)
 	summary.Print(opts.Stdout, m, slug, filepath.Join(outputDir, slug))
@@ -202,7 +212,11 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	return nil
+	return &Result{
+		Slug:         slug,
+		Note:         note,
+		ManifestPath: manifestPath,
+	}, nil
 }
 
 // resolveSlug applies the cascade documented in the plan and, when
