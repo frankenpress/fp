@@ -82,15 +82,15 @@ func errNotImplemented(verb string) error {
 }
 
 const rootLong = `fp wraps the FrankenPress designer-promotion lifecycle: capture local site
-state, review, and (in later phases) apply snapshots back for round-trip
-iteration. It is a thin host-side ergonomics layer over the wp fp WP-CLI
+state, apply snapshots back for round-trip iteration, and ship the result
+via PR. It is a thin host-side ergonomics layer over the wp fp WP-CLI
 subcommands provided by frankenpress/mu-plugin.
 
   fp snapshot              capture local site state into web/imports/<slug>/
-  fp apply <dir>           apply a snapshot back into the local stack (Phase 2)
-  fp diff <slug>           compare local site state against a snapshot (later)
-  fp validate <dir>        validate a snapshot's manifest schema (later)
-  fp release               capture + commit + push + open PR (later)
+  fp apply <dir-or-slug>   apply a snapshot back into the local stack
+  fp diff <a> <b>          structural delta between two committed snapshots
+  fp release               one-shot capture + commit + push + open PR
+  fp validate <dir>        validate a snapshot's manifest schema (future)
   fp version               print the binary version
 
 The designer's docker-compose stack must already be running (make up).

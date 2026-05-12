@@ -110,7 +110,7 @@ func TestRun_QuickMode_TimestampedSlug_NoStatePersisted_RealCapture(t *testing.T
 		Quick:       true,
 		Now:         fixedNow,
 	}
-	if err := Run(context.Background(), opts); err != nil {
+	if _, err := Run(context.Background(), opts); err != nil {
 		t.Fatalf("Run: %v (stderr: %s)", err, stderr.String())
 	}
 
@@ -184,7 +184,7 @@ func TestRun_NormalMode_PersistsState(t *testing.T) {
 		Note:        "test note",
 		Now:         fixedNow,
 	}
-	if err := Run(context.Background(), opts); err != nil {
+	if _, err := Run(context.Background(), opts); err != nil {
 		t.Fatalf("Run: %v (stderr: %s)", err, stderr.String())
 	}
 
@@ -212,7 +212,7 @@ func TestRun_StackDown_ReturnsHintError(t *testing.T) {
 		{Name: "test-site-1", Service: "site", State: "exited"},
 	}
 	cfg, _ := config.Load(root)
-	err := Run(context.Background(), Options{
+	_, err := Run(context.Background(), Options{
 		RepoRoot: root,
 		Config:   cfg,
 		State:    &state.State{},
