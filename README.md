@@ -1,18 +1,19 @@
 # fp — FrankenPress designer-promotion CLI
 
 A small Go binary that wraps the [FrankenPress](https://github.com/frankenpress)
-snapshot-and-promote lifecycle.
+designer-promotion lifecycle from the host side.
 
-Designers run `fp snapshot` from their site repo root after iterating on local
-WordPress; fp shells into the running docker-compose stack, invokes
-`wp fp snapshot` (provided by [`frankenpress/mu-plugin`](https://github.com/frankenpress/mu-plugin)),
-and `docker cp`'s the result into `web/imports/<slug>/`. The snapshot is
-committed alongside the rest of the site code, baked into the next site image,
-and applied on-cluster by the chart's install Job.
+Designers iterate on a local WordPress in docker-compose, then use `fp` to
+**capture** that state (`fp snapshot`), **apply** captures back for round-trip
+iteration (`fp apply`), **diff** two captures during review (`fp diff`), and
+**release** the result in one shot — commit, push, open PR (`fp release`).
 
-`fp` is a host-side ergonomics wrapper — every bit of business logic lives in
-the mu-plugin. fp's job is to make the capture feel like one Enter, not three
-shell commands with quoting traps.
+Every bit of business logic (what to capture, schema versioning, apply
+semantics) lives in [`frankenpress/mu-plugin`](https://github.com/frankenpress/mu-plugin)'s
+`wp fp ...` WP-CLI commands. `fp`'s job is **ergonomics**: shell into the
+container, hand wp-cli the right args, `docker cp` the result back out, prompt
+the designer with sensible defaults — turn three shell commands with quoting
+traps into one Enter.
 
 ## Install
 
@@ -29,8 +30,11 @@ go install github.com/frankenpress/fp/cmd/fp@latest
 
 ## Usage
 
-From your site repo's root (or any subdirectory — fp walks up to find
-`frankenpress.toml` or `composer.json`):
+Run any subcommand from your site repo's root or any subdirectory — `fp` walks
+up to find `frankenpress.toml` or `composer.json` to identify the repo. The
+docker-compose stack must already be up (`fp` doesn't bring it up).
+
+### `fp snapshot` — capture local site state
 
 ```bash
 fp snapshot
@@ -38,18 +42,15 @@ fp snapshot
 
 Three Enters by default:
 
-1. **slug** — fp suggests the last slug you used (or your git branch / a
+1. **slug** — `fp` suggests the last slug you used (or your git branch / a
    composer-derived default if there's no prior history); Enter accepts.
-2. **note** — if `$EDITOR` is set and you're at a TTY, fp opens it
+2. **note** — if `$EDITOR` is set and you're at a TTY, `fp` opens it
    (`git commit`-style); otherwise reads one line from stdin.
-3. **continue** — if the target dir has uncommitted git changes, fp asks before
-   overwriting.
+3. **continue** — if the target dir has uncommitted git changes, `fp` asks
+   before overwriting.
 
-After capture, fp prints a summary of what landed (templates, options,
-attachments, uploads-audit counts) and the suggested
-`git add … && git commit -m "snapshot: …"` commands.
-
-### Flags
+After capture, `fp` prints a summary (templates, options, attachments,
+uploads-audit counts) and the suggested `git add … && git commit` commands.
 
 | Flag | What it does |
 |---|---|
@@ -61,22 +62,81 @@ attachments, uploads-audit counts) and the suggested
 | `--service <s>` | Override `[snapshot].service`. |
 | `--project <s>` | Override `[snapshot].project`. |
 
-`--quick` is the only safety-bypass flag. If you want to skip only the
-uncommitted-changes guard while keeping the prompts, `rm -rf web/imports/<slug>`
-before running fp.
+`--quick` is the only safety-bypass flag. To skip only the uncommitted-changes
+guard while keeping the prompts, `rm -rf web/imports/<slug>` first.
 
-### Other subcommands
+### `fp apply <slug-or-path>` — round-trip iteration
 
-```text
-fp apply <snapshot-dir>     Phase 2 — apply a snapshot back into the local stack
-fp diff <slug>              future — diff current state against a committed snapshot
-fp validate <snapshot-dir>  future — strict schema validation
-fp release                  future — capture + commit + push + open PR in one shot
-fp version                  print binary version + commit
+```bash
+fp apply sts-launch                # bare slug → resolves against [snapshot].output_dir
+fp apply web/imports/sts-launch    # relative path
+fp apply /abs/path/to/snapshot     # absolute path
 ```
 
-Stub subcommands print "not implemented yet" and exit 2 so the command tree is
-discoverable today.
+`fp` stages the snapshot dir into the running container via `docker cp` and
+runs `wp fp apply` against it. Idempotent — the mu-plugin's markers
+short-circuit re-applies; `fp` surfaces "snapshot already applied" cleanly
+without erroring. Use for **capture → tweak → re-apply** loops without
+rebuilding the image.
+
+The path must resolve to a directory inside the site repo; the container only
+sees `/app/<rel-to-repo>`.
+
+### `fp diff <a> <b>` — structural delta between two snapshots
+
+```bash
+fp diff sts-launch /tmp/old-sts-launch
+fp diff sts-launch-stg sts-launch-prd
+fp diff web/imports/foo web/imports/bar
+```
+
+Pure host-side. Reads each snapshot's `manifest.yaml` + `templates.json` +
+`options.json` + `attachments.json` + `uploads-manifest.txt` and prints a
+terminal-friendly summary of additions, removals, and modifications. No
+docker, no git, no mu-plugin coupling. Designed for PR review and
+cross-snapshot comparison.
+
+The "current site state vs committed snapshot" mode is **not** in v0.4.x — it
+needs a future mu-plugin "dump scope without writing files" command.
+
+### `fp release` — one-shot capture + commit + push + open PR
+
+```bash
+fp release                # interactive: slug + note prompts, then commit-confirm
+fp release --yes          # skip the commit-confirm prompt
+fp release --no-pr        # commit + push, no gh pr create
+fp release --branch X     # override the branch policy
+```
+
+The canonical "I'm done iterating, ship it" flow. Captures via the same
+pipeline as `fp snapshot`, then:
+
+1. **Branches** — if you're on `main` / `master` / `trunk`, `fp` auto-creates
+   `feat/snapshot-<slug>` and switches to it. Otherwise stays on the current
+   branch. Override with `--branch <name>`.
+2. **Commits** — `snapshot: <slug>` subject, designer note as body. Author is
+   **your local git config** (designer-authored commit, not a bot).
+3. **Pushes** — `git push -u origin <branch>`. No `--force` ever.
+4. **Opens a PR** — title `snapshot: <slug>`, body has a counts table parsed
+   from the manifest + the designer note + an "apply path" recap. Skip with
+   `--no-pr`.
+
+Every step's error message carries a manual continuation command if recovery
+is needed (push failed → "retry the push manually, then `gh pr create`").
+PR-already-exists is detected via `gh pr view` and surfaces the existing URL
+instead of erroring.
+
+`--yes` skips only the "commit and push?" confirmation prompt; it is **not** a
+safety bypass.
+
+### `fp version` / `fp validate`
+
+```bash
+fp version              # version + commit SHA (baked at build time via -ldflags)
+fp validate <dir>       # stub — strict schema validation is future scope
+```
+
+Only `fp validate` is still a stub.
 
 ## Configuration
 
@@ -98,17 +158,25 @@ State the CLI persists between invocations lives at `.fp/state.json` in the
 repo root. fp drops a `.fp/.gitignore` on first write so this stays
 machine-local.
 
-## How it talks to docker
+## How it talks to docker, git, and gh
 
-fp shells out to your `docker` CLI; it does not link the Docker SDK. Whatever
-authentication / context / credential-helper setup `docker compose ps` works
-under, fp inherits — including rootless docker, colima, OrbStack, custom
-DOCKER_HOST values. The trade-off is that you must have `docker compose` v2
-available locally (the same binary you use for `make up`).
+`fp` shells out to your local `docker`, `git`, and `gh` CLIs. It does **not**
+link the Docker SDK, go-git, or a GitHub API client. Whatever authentication,
+context, and credential-helper setup those CLIs work under, `fp` inherits —
+rootless docker, colima, OrbStack, custom `DOCKER_HOST`, SSH agents, gh's
+stored token, all of it.
 
-Internally every docker invocation routes through a `Runner` interface
-(`internal/docker/`). Tests substitute a recording fake — there is no docker
-dependency in `go test ./...`.
+The trade-offs:
+
+- `docker compose` v2 must be available locally (the same binary you use for
+  `make up`).
+- `fp release` additionally needs `git` and `gh` on `PATH`, authenticated to
+  the right remote. `git push` and `gh pr create` are the only places `fp`
+  touches them.
+
+Internally every external-CLI call routes through a `Runner` interface
+(`internal/docker/`, `internal/git/`, `internal/gh/`). Tests substitute a
+recording fake — `go test ./...` has zero external-binary dependencies.
 
 ## Local development
 
@@ -118,6 +186,20 @@ go test ./...
 go vet ./...
 gofmt -d .       # must produce no diff
 golangci-lint run
+
+# Subcommand tour:
+./fp --help
+./fp snapshot --help
+./fp apply --help
+./fp diff --help
+./fp release --help
+
+# End-to-end against a real stack:
+cd ~/path/to/your-site
+make up
+go run ~/path/to/fp/cmd/fp snapshot
+go run ~/path/to/fp/cmd/fp apply <slug>
+go run ~/path/to/fp/cmd/fp release --no-pr   # safer rehearsal — skips PR open
 ```
 
 `mise` pins Go 1.24 (`.mise.toml`); CI matches via `actions/setup-go`.
