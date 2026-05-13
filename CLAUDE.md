@@ -11,22 +11,33 @@ semantics) lives in
 [`frankenpress/mu-plugin`](https://github.com/frankenpress/mu-plugin)'s
 `wp fp` WP-CLI subcommands. fp's only job is **ergonomics**: turn the
 three-line shell incantation designers used to type into one Enter,
-with prompts, sane defaults, and a friendly summary.
+with prompts, sane defaults, friendly summaries, and a round-trip /
+release path on top.
 
 Composer/binary name is `fp` (locked in before homebrew tap publish;
 renaming later breaks installs). Single binary — no aliases, no other
 entry points.
 
-Detailed design / decisions: [`frankenpress/.aidocs/fp-go-cli.md`](../.aidocs/fp-go-cli.md).
-Public docs (after Phase 5/7): **<https://docs.frankenpress.com/components/fp>**.
+Current shipped surface (v0.4.0, 2026-05-13):
+
+  - `fp snapshot` — capture local site state into `web/imports/<slug>/`
+  - `fp apply <slug-or-path>` — stage + `wp fp apply` for round-trip iteration
+  - `fp diff <a> <b>` — structural delta between two committed snapshots
+  - `fp release` — one-shot capture + commit + push + open PR
+  - `fp validate <dir>` — still a stub (Phase 12+ — strict schema validation)
+  - `fp version` — version + commit
+
+Detailed design / decisions: [`frankenpress/.aidocs/fp-go-cli.md`](../.aidocs/fp-go-cli.md) (all 11 phases shipped).
+Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-facing flow.
 
 ## File layout
 
 - `cmd/fp/main.go` — thin entrypoint, calls `cli.NewRoot().Run(os.Args[1:])`.
 - `internal/cli/` — cobra wiring. One file per subcommand
-  (`root.go`, `version.go`, `snapshot.go`, plus stubs `apply.go` /
-  `diff.go` / `validate.go` / `release.go`). Adding a verb is one
-  new file + one `cmd.AddCommand` line in `root.go`.
+  (`root.go`, `version.go`, `snapshot.go`, `apply.go`, `diff.go`,
+  `release.go`, plus `validate.go` which is still a stub returning
+  exit 2). Adding a verb is one new file + one `cmd.AddCommand` line
+  in `root.go`.
 - `internal/version/` — `Version` + `Commit` baked in via goreleaser
   `-ldflags`. `String()` falls back to `runtime/debug.ReadBuildInfo()`
   for local `go build` so `fp version` is always meaningful.
@@ -37,82 +48,141 @@ Public docs (after Phase 5/7): **<https://docs.frankenpress.com/components/fp>**
 - `internal/state/` — `.fp/state.json` IO. Atomic via tempfile +
   rename. Drops a `.fp/.gitignore` so per-machine slug history stays
   uncommitted.
-- `internal/docker/` — **the testability seam**. `Runner` interface
-  with three methods (`ComposeExec` / `ComposeExecStreaming` / `Copy`
-  / `PS`), one real `exec.Command`-based impl, and a recording `Fake`
-  for tests. fp does **not** link the Docker SDK by design — auth +
-  context + credential helpers are the user's docker CLI's problem,
-  not ours.
+- `internal/docker/` — **the testability seam for container ops**.
+  `Runner` interface with four methods (`ComposeExec` /
+  `ComposeExecStreaming` / `Copy` / `PS`), one real `exec.Command`-based
+  impl, and a recording `Fake` for tests. fp does **not** link the
+  Docker SDK by design — auth + context + credential helpers are the
+  user's docker CLI's problem, not ours.
+- `internal/git/` — testability seam for git ops. `Runner` interface
+  (`CurrentBranch` / `BranchExists` / `Checkout` / `Add` / `Commit` /
+  `Push`) + real impl + `Fake`. Used by `internal/release/`.
+- `internal/gh/` — testability seam for GitHub CLI. `Runner` interface
+  (`PRCreate` / `PRView`) + real impl + `Fake`. Used by
+  `internal/release/`. `gh` auth + context discovery is the user's
+  problem, not ours — same shape as `docker`.
 - `internal/compose/` — project + service detection. `DefaultProject`
   mirrors compose v2's basename-of-cwd default; `Check` maps
   PS output to a status enum that drives the Error-UX (a) hierarchy.
 - `internal/repo/` — git branch + composer.json + uncommitted-changes
-  helpers. Every helper is best-effort and returns an empty string /
-  false rather than erroring on a missing git binary / file.
+  helpers used by **slug cascade + the snapshot guard**. Best-effort:
+  returns empty / false rather than erroring on missing git or file.
+  Distinct from `internal/git/` (which is the typed Runner for the
+  release path; this one is read-only cascade helpers).
 - `internal/prompt/` — interactive prompts (slug readline, note via
   `$EDITOR` when interactive + `EDITOR` set, otherwise readline;
   y/N confirmation). All helpers take explicit `io.Reader` /
   `io.Writer` args so tests drive them with byte buffers.
-- `internal/snapshot/` — the orchestrator. `Run(ctx, Options)` is
-  the single entrypoint; `Options` carries every input (config,
-  state, runner, IO streams, flag values). Stateless package,
-  testable end-to-end with the Runner fake.
-- `internal/apply/` — Phase 2; empty package today.
-- `internal/summary/` — manifest.yaml parser + post-capture printer.
-  **Tolerant**: ignores unknown fields and accepts any
-  `fp.snapshot/v*` schema (the strict validator is the future `fp
-  validate` subcommand). Prints a one-line warning when the schema
-  is newer than `knownMaxSchemaMinor`.
+- `internal/snapshot/` — the capture orchestrator. `Run(ctx, Options)`
+  returns `(*Result, error)`; `Result` carries `Slug` / `Note` /
+  `ManifestPath` so composing callers (`internal/release/`) can
+  reference what was captured without re-deriving. Stateless package,
+  testable end-to-end with the docker fake.
+- `internal/apply/` — apply orchestrator. `Run(ctx, Options)`. Stages
+  the snapshot dir into the container via `docker cp` then streams
+  `wp fp apply`. A `captureWriter` sniffs the streaming output for
+  the "apply skipped" sentinel so the summary line is accurate
+  without parsing exit shapes.
+- `internal/diff/` — pure host-side snapshot vs snapshot differ.
+  Reads each side's `manifest.yaml` + `templates.json` +
+  `options.json` + `attachments.json` + `uploads-manifest.txt` and
+  produces a structural `*Result`. `render.go` formats the Result as
+  human-readable terminal output. Zero docker / git / gh coupling.
+- `internal/release/` — composes `snapshot.Run` + `git.Runner` +
+  `gh.Runner` + `prompt.Confirm` into the one-shot designer flow.
+  Owns the branch policy (auto-create `feat/snapshot-<slug>` off
+  protected branches), commit-message shape, PR body template.
+- `internal/summary/` — manifest.yaml parser + post-capture printer
+  + tolerant schema check. **Tolerant**: ignores unknown fields and
+  accepts any `fp.snapshot/v*` schema (the strict validator is the
+  future `fp validate` subcommand). Prints a one-line warning when
+  the schema is newer than `knownMaxSchemaMinor`. Reused by `apply`
+  (for the pre-flight + post-summary) and `release` (for the PR body).
 
 ## Conventions
 
 - **Cobra for the CLI tree.** No global state — `NewRoot()` is the
   single composition point; each subcommand is a `newXCmd() *cobra.Command`
   function.
-- **`docker.Runner` is the testability boundary.** Every docker /
-  docker-compose call goes through the interface; the real impl
-  shells out, the fake records + returns canned responses. There is
-  no integration-with-real-docker code in `go test ./...`.
-- **`--quick` is the only safety-bypass flag.** No `--force`. If a
-  designer wants to skip only the uncommitted-changes guard,
-  `rm -rf` first. Two flags for "be careful less" is a smell.
+- **Runner interfaces are the testability boundary.** `docker.Runner` +
+  `git.Runner` + `gh.Runner` follow the same shape: interface, one real
+  `exec.Command`-based impl, one recording `Fake`. No external CLI is
+  required for `go test ./...`. When a new external tool needs to land
+  in fp, add a fourth Runner alongside.
+- **External CLI auth is the user's problem.** `docker compose` /
+  `git` / `gh` all inherit whatever local credentials, contexts, and
+  config the user already has. fp does not link any SDK and does not
+  reimplement auth.
+- **`--quick` is the only safety-bypass on `fp snapshot`.** No `--force`.
+  Designers who want to skip only the uncommitted-changes guard
+  `rm -rf` the target dir first. Two flags for "be careful less" is
+  a smell.
+- **`--yes` on `fp release` is a UX accelerator, not a safety bypass.**
+  It skips only the "commit and push?" confirmation prompt. The
+  underlying capture still runs with full safety (uncommitted-changes
+  guard, etc.) — release doesn't expose a `--quick` passthrough.
 - **Verbatim wp-cli stderr.** The mu-plugin's error messages are
   written deliberately (especially "no snapshot adapter detected").
-  `internal/snapshot` streams stdout/stderr through unmodified;
-  failures print a brief framing line + a hint, never reformat the
-  underlying message.
+  `internal/snapshot` and `internal/apply` both stream stdout/stderr
+  through unmodified; failures print a brief framing line + a hint,
+  never reformat the underlying message.
 - **Slug cascade order is load-bearing.** state.LastSlug → git
   branch (sans `feat/` etc. prefix) → `composer.json` `name` →
   timestamped fallback. `slugify` strips to `[a-z0-9-]` and matches
   the mu-plugin's safe_slug semantics — dir names must look identical
-  regardless of which side wrote them.
+  regardless of which side wrote them. `fp apply` / `fp diff` /
+  `fp release` all interpret a bare positional `<slug>` the same way:
+  resolve against `[snapshot].output_dir`.
 - **Schema tolerance.** Summary printer accepts `fp.snapshot/v*` and
   unknown fields. Warning fires when `v<N>` exceeds the build's
   `knownMaxSchemaMinor` — bump that constant when fp adds new fields
   it reads from a newer manifest.
-- **Errors are sentences.** This is a CLI; messages land in
-  terminals. `fmt.Errorf("foo failed: %w", err)`, lowercase, no
-  trailing punctuation, no stack-trace flavour.
+- **`snapshot.Run` returns `(*Result, error)` for composing callers.**
+  `release` needs the resolved slug + note + manifest path without
+  re-running cascade logic. If you add a new composing caller, thread
+  it through `*Result` rather than re-deriving.
+- **Errors are sentences with recovery hints.** This is a CLI;
+  messages land in terminals. `fmt.Errorf("foo failed: %w", err)`,
+  lowercase, no trailing punctuation, no stack-trace flavour. Where
+  a step in the pipeline can fail mid-way (release: commit OK but
+  push fails), the error should print the manual continuation command.
 - **Tag-driven releases.** `git tag vX.Y.Z && git push` runs
   goreleaser; pushes to `main` do **not** auto-release. v0 era —
   breaking changes are allowed in minors.
 
 ## Don'ts
 
-- **Don't link the Docker SDK for Go.** The shell-out approach is
-  load-bearing: it inherits the user's `docker compose` setup (auth,
-  contexts, rootless, colima/orbstack) without fp owning any of it.
+- **Don't link the Docker SDK / go-git / a github API client.** All
+  three external tools (`docker compose`, `git`, `gh`) are shelled
+  out via Runner interfaces. Linking SDKs means owning auth +
+  contexts + credential helpers, which is the user's local CLI's job.
 - **Don't reimplement WP option deserialisation in Go.** The
   mu-plugin runs inside WordPress with the real PHP deserialiser;
   fp reads JSON/YAML the mu-plugin already emitted. If you're parsing
   PHP-serialised blobs in Go, you're on the wrong side of the seam.
-- **Don't add a `--force` or `--yes` flag.** `--quick` is the single
-  bypass; that's the explicit plan decision.
-- **Don't reformat wp-cli stderr.** Stream it through. The mu-plugin
-  error text is canonical.
+- **Don't add a `--force` flag anywhere.** No fp subcommand has a
+  force-bypass. `fp snapshot --quick` is the single safety bypass and
+  it's behaviour-changing (timestamped slug, skip state write), not
+  a guard-overrider. `fp release --yes` skips one specific confirmation
+  prompt and does **not** bypass any safety guard.
+- **Don't reformat wp-cli stderr.** Stream it through, both in
+  `internal/snapshot` and `internal/apply`. The mu-plugin error text
+  is canonical.
 - **Don't add a global `--verbose`.** Verbosity is contextual:
-  snapshot already streams wp-cli output; doctor (future) is
-  enumeration-style. A toggle would just split the design surface.
+  snapshot + apply already stream wp-cli output; diff is structured
+  output; release prints what it did at each step. A toggle would
+  just split the design surface.
+- **Don't extend `fp release` to merge the PR or tag the repo.** The
+  human-review checkpoint between PR open and merge is load-bearing.
+  The original plan's "tag too" entry was deferred — tags trigger
+  image builds via main-merge, not feature-branch push, so there's no
+  in-band use case.
+- **Don't add a current-state-vs-snapshot mode to `fp diff` without
+  a mu-plugin command first.** Phase 10 scope picked the
+  snapshot-vs-snapshot shape exactly because the current-state path
+  needs `wp fp dump --scope` (or similar) that doesn't exist yet.
+  Parsing the running WP DB from the host is on the wrong side of
+  the seam.
 - **Don't mutate `.aidocs/fp-go-cli.md`** without explicit user
   approval. The "Resolved:" decisions there are the contract.
 
@@ -127,7 +197,11 @@ golangci-lint run
 # Build + smoke-run:
 go build -o fp ./cmd/fp
 ./fp version
+./fp --help                # surface tour
 ./fp snapshot --help
+./fp apply --help
+./fp diff --help
+./fp release --help
 ```
 
 End-to-end against a live stack (designer-side, requires docker
@@ -136,8 +210,23 @@ End-to-end against a live stack (designer-side, requires docker
 ```bash
 cd ~/Developer/EightOEight/sts
 make up   # if not already up
+
+# Capture (the canonical loop):
 go run ~/Developer/frankenpress/fp/cmd/fp snapshot
+
+# Apply back into the stack (round-trip iteration):
+go run ~/Developer/frankenpress/fp/cmd/fp apply sts-launch
+
+# Diff a fresh quick-capture against committed:
+go run ~/Developer/frankenpress/fp/cmd/fp snapshot --quick
+go run ~/Developer/frankenpress/fp/cmd/fp diff sts-launch <new-quick-slug>
+
+# Full release (commits + pushes + opens a PR — careful!):
+go run ~/Developer/frankenpress/fp/cmd/fp release --no-pr   # safer rehearsal
 ```
+
+The unit tests cover every Runner-fronted operation with `Fake`s, so
+real docker / git / gh is **not** required for `go test ./...`.
 
 ## When you bump behaviour
 
@@ -145,9 +234,20 @@ Keep these in sync:
 
 1. The plan at [`frankenpress/.aidocs/fp-go-cli.md`](../.aidocs/fp-go-cli.md)
    — especially the "Resolved" decisions and the Error-UX table.
-2. `README.md` flag table + config-shape example.
-3. `knownMaxSchemaMinor` in `internal/summary/summary.go` — bump
+2. `README.md` flag table + config-shape example + subcommand surface.
+3. The root help text in `internal/cli/root.go` (`rootLong`) — it
+   lists every subcommand inline.
+4. `knownMaxSchemaMinor` in `internal/summary/summary.go` — bump
    when fp learns about a new manifest field added in mu-plugin.
+5. If `snapshot.Run`'s signature or `*Result` shape changes:
+   `internal/release/release.go` reads `Slug` / `Note` / `ManifestPath`
+   from Result, so a field rename/removal cascades there. Search for
+   `snapResult.` in the release package before mutating.
+6. If `frankenpress.toml`'s `[snapshot]` shape changes: update
+   `internal/config/config.go`'s `SnapshotConfig` AND the example
+   block in [`frankenpress/site-template`'s README](https://github.com/frankenpress/site-template/blob/main/README.md).
+7. The public docs at [`docs/designer-flow.mdx`](https://github.com/frankenpress/docs/blob/main/designer-flow.mdx)
+   if a user-visible flow changes (new subcommand, prompt UX, etc.).
 
 ## Companion repos
 
