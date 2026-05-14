@@ -31,7 +31,7 @@ func ReadEnvKey(envPath, key string) (value string, found bool, err error) {
 	if err != nil {
 		return "", false, fmt.Errorf("open %s: %w", envPath, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 4096), 1<<20)
 	prefix := key + "="
@@ -87,7 +87,7 @@ func ScaffoldEnvFromExample(repoRoot string) (created bool, err error) {
 		}
 		return false, fmt.Errorf("open %s: %w", examplePath, err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	// Create with O_EXCL to refuse to overwrite if the file appeared
 	// between our stat and create (a benign race, but it'd be wrong
@@ -100,7 +100,7 @@ func ScaffoldEnvFromExample(repoRoot string) (created bool, err error) {
 		return false, fmt.Errorf("create %s: %w", envPath, err)
 	}
 	if _, err := io.Copy(dst, src); err != nil {
-		dst.Close()
+		_ = dst.Close()
 		return false, fmt.Errorf("copy %s → %s: %w", examplePath, envPath, err)
 	}
 	if err := dst.Close(); err != nil {
@@ -145,21 +145,21 @@ func EnsureEnvKey(envPath, key, value, markerComment string) (appended bool, err
 		// `^# *KEY=` (commented documentation) does NOT count as set.
 		// `^KEY=...` (active assignment, possibly with whitespace) does.
 		if strings.HasPrefix(line, prefix) {
-			f.Close()
+			_ = f.Close()
 			return false, nil
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		f.Close()
+		_ = f.Close()
 		return false, fmt.Errorf("scan %s: %w", envPath, err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	out, err := os.OpenFile(envPath, os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return false, fmt.Errorf("open %s for append: %w", envPath, err)
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
 	// Stat to decide whether we need a leading newline. Empty files
 	// don't; files that already end in '\n' don't; everything else
@@ -202,7 +202,7 @@ func tailsWithNonNewline(path string, size int64) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("open %s for tail check: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Seek(size-1, io.SeekStart); err != nil {
 		return false, fmt.Errorf("seek %s: %w", path, err)
 	}
