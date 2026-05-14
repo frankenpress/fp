@@ -126,13 +126,33 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   `internal/snapshot` and `internal/apply` both stream stdout/stderr
   through unmodified; failures print a brief framing line + a hint,
   never reformat the underlying message.
-- **Slug cascade order is load-bearing.** state.LastSlug → git
-  branch (sans `feat/` etc. prefix) → `composer.json` `name` →
-  timestamped fallback. `slugify` strips to `[a-z0-9-]` and matches
-  the mu-plugin's safe_slug semantics — dir names must look identical
-  regardless of which side wrote them. `fp apply` / `fp diff` /
-  `fp release` all interpret a bare positional `<slug>` the same way:
-  resolve against `[snapshot].output_dir`.
+- **Snapshot slugs default to UTC timestamps.** `fp snapshot` with
+  no `--slug` produces `YYYY-MM-DDTHH-MM-SSZ` — filename-safe (the
+  ISO 8601 `:` becomes `-`) and lex-sortable, so `ls web/imports/`
+  is naturally chronological. `--slug=<name>` is the explicit
+  override for milestone markers. The pre-Phase-2 cascade
+  (state.LastSlug → git branch → composer name → timestamp) is
+  gone — chart install Jobs (charts ≥ v0.12.0) pick the snapshot
+  with the highest `manifest.created`, so designers accumulate
+  snapshots in `web/imports/` instead of `git rm`-ing the previous
+  one. `slugify` strips to `[a-z0-9-]` and matches the mu-plugin's
+  safe_slug semantics — dir names must look identical regardless of
+  which side wrote them. `fp apply` / `fp diff` / `fp release` all
+  interpret a bare positional `<slug>` the same way: resolve against
+  `[snapshot].output_dir`.
+- **Sub-second collision guard.** When the default timestamp slug
+  resolves to a dir that already exists (designer fired two
+  snapshots in the same second), Run() refuses with "wait a
+  moment" rather than letting pre-clean wipe the prior capture.
+  Only fires for the timestamp-default path; `--slug=<name>` keeps
+  its iterate-on-the-named-slug overwrite behaviour.
+- **`fp apply` with no positional → pick latest.** Walks
+  `[snapshot].output_dir`, reads each `manifest.yaml`, picks the
+  highest `created`. Same logic as the charts install Job at deploy
+  time, so local apply targets the same snapshot the cluster will.
+  Helper lives in `internal/apply/picklatest.go` as `PickLatest()`
+  — exported so future `fp init` can reuse it without re-deriving.
+  Passing a positional slug-or-path keeps the existing behaviour.
 - **Schema tolerance.** Summary printer accepts `fp.snapshot/v*` and
   unknown fields. Warning fires when `v<N>` exceeds the build's
   `knownMaxSchemaMinor` — bump that constant when fp adds new fields
