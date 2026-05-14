@@ -66,10 +66,12 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   mirrors compose v2's basename-of-cwd default; `Check` maps
   PS output to a status enum that drives the Error-UX (a) hierarchy.
 - `internal/repo/` — git branch + composer.json + uncommitted-changes
-  helpers used by **slug cascade + the snapshot guard**. Best-effort:
-  returns empty / false rather than erroring on missing git or file.
-  Distinct from `internal/git/` (which is the typed Runner for the
-  release path; this one is read-only cascade helpers).
+  helpers. Best-effort: returns empty / false rather than erroring on
+  missing git or file. Used by **the snapshot uncommitted-changes
+  guard**; pre-Phase-2 also fed the slug cascade (now removed — see
+  `Snapshot slugs default to UTC timestamps` below). Distinct from
+  `internal/git/` (which is the typed Runner for the release path;
+  this one is read-only).
 - `internal/prompt/` — interactive prompts (slug readline, note via
   `$EDITOR` when interactive + `EDITOR` set, otherwise readline;
   y/N confirmation). All helpers take explicit `io.Reader` /
