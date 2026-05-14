@@ -3,7 +3,6 @@ package apply
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -272,13 +271,79 @@ func TestRun_WPCLIFailure_SurfacesExitCode(t *testing.T) {
 	}
 }
 
-func TestRun_NoTarget(t *testing.T) {
-	err := Run(context.Background(), Options{})
-	if err == nil {
-		t.Fatal("expected error for missing target")
+func TestRun_NoTarget_NoSnapshots_ErrorsWithHint(t *testing.T) {
+	// Empty `web/imports/` → PickLatest reports nothing to apply with
+	// a hint to capture one. Distinct from the missing-manifest case
+	// (which is "you named a slug that's broken"); this is "you ran
+	// `fp apply` with nothing to apply yet."
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "frankenpress.toml"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if !errors.Is(err, err) || !strings.Contains(err.Error(), "snapshot dir or slug") {
-		t.Errorf("error message missing usage hint: %v", err)
+	if err := os.MkdirAll(filepath.Join(root, "web", "imports"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := config.Load(root)
+
+	err := Run(context.Background(), Options{
+		RepoRoot: root,
+		Config:   cfg,
+		Runner:   docker.NewFake(),
+		Stdout:   io.Discard,
+		Stderr:   io.Discard,
+		// Target left empty intentionally.
+	})
+	if err == nil {
+		t.Fatal("expected error from PickLatest on empty imports dir")
+	}
+	if !strings.Contains(err.Error(), "fp snapshot") {
+		t.Errorf("error message missing 'fp snapshot' hint: %v", err)
+	}
+}
+
+func TestRun_NoTarget_PicksLatestByCreated(t *testing.T) {
+	// Three snapshots committed; PickLatest should land on the one
+	// with the highest `created`, regardless of dir name (slug)
+	// alphabetical order or filesystem mtime.
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "frankenpress.toml"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeSnapshot(t, root, "a-oldest", "2026-01-01T00:00:00Z")
+	writeSnapshot(t, root, "z-newest", "2026-05-14T09:18:00Z") // z- sorts last alphabetically
+	writeSnapshot(t, root, "m-middle", "2026-03-15T12:00:00Z")
+
+	fake := docker.NewFake()
+	fake.PSContainers = []docker.Container{
+		{Name: "test-site-1", Service: "site", State: "running"},
+	}
+	var observed string
+	fake.StreamingFunc = func(_ context.Context, _, _ string, args []string, stdout, _ io.Writer) error {
+		for _, a := range args {
+			if strings.HasPrefix(a, "--snapshot-dir=") {
+				observed = a
+			}
+		}
+		_, _ = stdout.Write([]byte("Success: apply complete\n"))
+		return nil
+	}
+	cfg, _ := config.Load(root)
+
+	var out bytes.Buffer
+	err := Run(context.Background(), Options{
+		RepoRoot: root,
+		Config:   cfg,
+		Runner:   fake,
+		Stdout:   &out,
+		Stderr:   io.Discard,
+		// Target left empty → PickLatest path.
+	})
+	if err != nil {
+		t.Fatalf("Run: %v\nstdout: %s", err, out.String())
+	}
+	want := "--snapshot-dir=/app/web/imports/z-newest"
+	if observed != want {
+		t.Errorf("wp invocation got %q, want %q", observed, want)
 	}
 }
 
@@ -303,6 +368,21 @@ func writeTomlAndSnap(t *testing.T, root, slug string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(snap, "manifest.yaml"), fixtureManifest(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeSnapshot drops a minimal snapshot dir with a given created
+// timestamp. Used by PickLatest tests where the created field is the
+// thing under test.
+func writeSnapshot(t *testing.T, root, slug, created string) {
+	t.Helper()
+	snap := filepath.Join(root, "web", "imports", slug)
+	if err := os.MkdirAll(snap, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("schema: fp.snapshot/v5\nid: " + slug + "\ncreated: \"" + created + "\"\nadapter: fse\n")
+	if err := os.WriteFile(filepath.Join(snap, "manifest.yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

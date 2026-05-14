@@ -15,7 +15,11 @@ import (
 	"github.com/frankenpress/fp/internal/state"
 )
 
-func TestDefaultSlug_PrefersStateLastSlug(t *testing.T) {
+func TestDefaultSlug_AlwaysTimestamp(t *testing.T) {
+	// Post-Phase-2: the cascade (state.LastSlug → git branch →
+	// composer name → timestamp) is gone. DefaultSlug returns the
+	// timestamp unconditionally, regardless of state / composer /
+	// git branch. --slug=<name> is the explicit override path.
 	root := t.TempDir()
 	writeComposer(t, root, "frankenpress/sts")
 	opts := Options{
@@ -24,42 +28,15 @@ func TestDefaultSlug_PrefersStateLastSlug(t *testing.T) {
 		Now:      fixedNow,
 	}
 	got := DefaultSlug(opts)
-	if got != "sts-launch" {
-		t.Errorf("DefaultSlug = %q, want sts-launch", got)
-	}
-}
-
-func TestDefaultSlug_FallsBackToComposerWhenNoState(t *testing.T) {
-	root := t.TempDir()
-	writeComposer(t, root, "frankenpress/sts")
-	opts := Options{
-		RepoRoot: root,
-		State:    &state.State{},
-		Now:      fixedNow,
-	}
-	got := DefaultSlug(opts)
-	if got != "sts-launch" {
-		t.Errorf("DefaultSlug = %q, want sts-launch (composer fallback)", got)
-	}
-}
-
-func TestDefaultSlug_TimestampedWhenNothingElse(t *testing.T) {
-	root := t.TempDir()
-	opts := Options{
-		RepoRoot: root,
-		State:    &state.State{},
-		Now:      fixedNow,
-	}
-	got := DefaultSlug(opts)
-	want := "snapshot-20260512-100000"
+	want := "2026-05-12T10-00-00Z"
 	if got != want {
-		t.Errorf("DefaultSlug = %q, want %q", got, want)
+		t.Errorf("DefaultSlug with state.LastSlug = %q, want %q (cascade should be gone)", got, want)
 	}
 }
 
 func TestTimestampedSlug(t *testing.T) {
 	got := TimestampedSlug(time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC))
-	want := "snapshot-20260512-100000"
+	want := "2026-05-12T10-00-00Z"
 	if got != want {
 		t.Errorf("TimestampedSlug = %q, want %q", got, want)
 	}
@@ -86,7 +63,7 @@ func TestRun_QuickMode_TimestampedSlug_NoStatePersisted_RealCapture(t *testing.T
 	fakeRunner.CopyFunc = func(_ context.Context, _, dst string) error {
 		// Land a tiny manifest into the host target so summary.Read
 		// has something to parse.
-		slugDir := filepath.Join(dst, "snapshot-20260512-100000")
+		slugDir := filepath.Join(dst, "2026-05-12T10-00-00Z")
 		if err := os.MkdirAll(slugDir, 0o755); err != nil {
 			return err
 		}
@@ -133,7 +110,7 @@ func TestRun_QuickMode_TimestampedSlug_NoStatePersisted_RealCapture(t *testing.T
 		}
 		for _, a := range c.Args {
 			if strings.HasPrefix(a, "--slug=") {
-				if a != "--slug=snapshot-20260512-100000" {
+				if a != "--slug=2026-05-12T10-00-00Z" {
 					t.Errorf("wp call slug arg = %q, want timestamped", a)
 				}
 				found = true
@@ -200,6 +177,95 @@ func TestRun_NormalMode_PersistsState(t *testing.T) {
 	}
 	if st.LastCaptureAt.IsZero() {
 		t.Error("state.LastCaptureAt is zero")
+	}
+}
+
+func TestRun_RefusesSubSecondCollision_WhenSlugFromTimestampDefault(t *testing.T) {
+	// Designer fires `fp snapshot` twice within the same second.
+	// The second invocation resolves the same timestamp slug and the
+	// dir already exists from the first capture. Pre-clean would
+	// silently wipe the first capture — refuse instead.
+	root := t.TempDir()
+	writeFrankenpressTOML(t, root)
+
+	// Pre-create the dir the default timestamp slug would land in.
+	existingSlug := TimestampedSlug(fixedNow())
+	existingDir := filepath.Join(root, "web", "imports", existingSlug)
+	if err := os.MkdirAll(existingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(existingDir, "manifest.yaml"), []byte("placeholder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, _ := config.Load(root)
+	_, err := Run(context.Background(), Options{
+		RepoRoot:    root,
+		Config:      cfg,
+		State:       &state.State{},
+		Runner:      docker.NewFake(), // never reached
+		Interactive: false,            // default → timestamp slug
+		Quick:       true,             // skip prompt + uncommitted-changes guard
+		Now:         fixedNow,
+	})
+	if err == nil {
+		t.Fatal("Run: expected sub-second collision error, got nil")
+	}
+	if !strings.Contains(err.Error(), "wait a moment") {
+		t.Errorf("error %v missing wait-a-moment hint", err)
+	}
+
+	// And the pre-existing manifest must still be there — refusal,
+	// not silent overwrite.
+	body, err := os.ReadFile(filepath.Join(existingDir, "manifest.yaml"))
+	if err != nil {
+		t.Fatalf("pre-existing manifest disappeared: %v", err)
+	}
+	if string(body) != "placeholder" {
+		t.Errorf("pre-existing manifest was overwritten: %q", string(body))
+	}
+}
+
+func TestRun_AllowsOverwrite_WhenSlugIsExplicit(t *testing.T) {
+	// Designer iterates on a named slug (--slug=foo) and the dir
+	// already exists from a previous capture. Pre-clean is intentional
+	// here — the explicit-slug path is the "iterate on a milestone"
+	// flow. Refuse-on-collision is only for the timestamp default.
+	root := t.TempDir()
+	writeFrankenpressTOML(t, root)
+
+	existingDir := filepath.Join(root, "web", "imports", "explicit-slug")
+	if err := os.MkdirAll(existingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(existingDir, "manifest.yaml"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeRunner := docker.NewFake()
+	fakeRunner.PSContainers = []docker.Container{
+		{Name: "test-site-1", Service: "site", State: "running"},
+	}
+	fakeRunner.CopyFunc = func(_ context.Context, _, dst string) error {
+		slugDir := filepath.Join(dst, "explicit-slug")
+		if err := os.MkdirAll(slugDir, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(slugDir, "manifest.yaml"), fixtureManifest(), 0o644)
+	}
+
+	cfg, _ := config.Load(root)
+	_, err := Run(context.Background(), Options{
+		RepoRoot:    root,
+		Config:      cfg,
+		State:       &state.State{},
+		Runner:      fakeRunner,
+		Interactive: false,
+		Slug:        "explicit-slug", // explicit → no collision guard
+		Now:         fixedNow,
+	})
+	if err != nil {
+		t.Fatalf("Run: expected success (explicit slug overwrite), got %v", err)
 	}
 }
 

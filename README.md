@@ -42,12 +42,18 @@ fp snapshot
 
 Three Enters by default:
 
-1. **slug** — `fp` suggests the last slug you used (or your git branch / a
-   composer-derived default if there's no prior history); Enter accepts.
+1. **slug** — `fp` suggests a UTC timestamp (`YYYY-MM-DDTHH-MM-SSZ`); Enter
+   accepts. Pass `--slug=<name>` (or type one at the prompt) to attach a
+   milestone marker instead.
 2. **note** — if `$EDITOR` is set and you're at a TTY, `fp` opens it
    (`git commit`-style); otherwise reads one line from stdin.
 3. **continue** — if the target dir has uncommitted git changes, `fp` asks
    before overwriting.
+
+Snapshots accumulate under `web/imports/` — older dirs are intentional
+history. The chart's install Job (charts ≥ v0.12.0) picks the snapshot
+with the highest `manifest.created` at deploy time, so there's no
+`git rm`-the-previous-slug step in the release flow.
 
 After capture, `fp` prints a summary (templates, options, attachments,
 uploads-audit counts) and the suggested `git add … && git commit` commands.
@@ -65,13 +71,20 @@ uploads-audit counts) and the suggested `git add … && git commit` commands.
 `--quick` is the only safety-bypass flag. To skip only the uncommitted-changes
 guard while keeping the prompts, `rm -rf web/imports/<slug>` first.
 
-### `fp apply <slug-or-path>` — round-trip iteration
+### `fp apply [<slug-or-path>]` — round-trip iteration
 
 ```bash
+fp apply                           # no arg → pick latest by manifest.created
 fp apply sts-launch                # bare slug → resolves against [snapshot].output_dir
 fp apply web/imports/sts-launch    # relative path
 fp apply /abs/path/to/snapshot     # absolute path
 ```
+
+With no positional argument, `fp` scans `[snapshot].output_dir` and applies
+the snapshot whose `manifest.created` is highest — same logic the chart's
+install Job uses at deploy time, so local apply targets the same snapshot
+your prod cluster will. Common after a fresh `fp snapshot`: just run
+`fp apply` to re-run the round-trip against your most recent capture.
 
 `fp` stages the snapshot dir into the running container via `docker cp` and
 runs `wp fp apply` against it. Idempotent — the mu-plugin's markers

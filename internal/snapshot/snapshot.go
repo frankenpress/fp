@@ -86,8 +86,8 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	outputDir := firstNonEmpty(opts.OutputDir, opts.Config.Snapshot.OutputDir, "web/imports")
 	containerOutputDir := firstNonEmpty(opts.Config.Snapshot.ContainerOutputDir, "/app/web/imports")
 
-	// Slug resolution — cascade + prompt (unless --quick or --slug).
-	slug, err := resolveSlug(opts)
+	// Slug resolution — timestamp default (unless --quick or --slug).
+	slug, fromDefault, err := resolveSlug(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -101,6 +101,21 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	hostTargetDir := filepath.Join(opts.RepoRoot, outputDir, slug)
 	hostOutputParent := filepath.Join(opts.RepoRoot, outputDir)
 	containerTargetDir := strings.TrimRight(containerOutputDir, "/") + "/" + slug
+
+	// Sub-second collision guard: when the slug came from the
+	// timestamp default and a dir with that name already exists, the
+	// pre-clean below would silently wipe the previous snapshot.
+	// Refuse instead — designer is firing snapshots faster than the
+	// timestamp resolution. The explicit --slug path is exempt
+	// (designer is iterating on a named slug; pre-clean is intentional).
+	if fromDefault {
+		if _, statErr := os.Stat(hostTargetDir); statErr == nil {
+			return nil, fmt.Errorf(
+				"snapshot dir %s already exists from a capture this same second; wait a moment and re-run, or pass --slug=<name>",
+				filepath.Join(outputDir, slug),
+			)
+		}
+	}
 
 	// Uncommitted-changes guard (skipped in --quick mode).
 	if !opts.Quick && repo.IsGitRepo(opts.RepoRoot) {
@@ -219,71 +234,77 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}, nil
 }
 
-// resolveSlug applies the cascade documented in the plan and, when
-// interactive + neither --quick nor --slug is set, prompts the
-// designer to accept or override the default.
-func resolveSlug(opts Options) (string, error) {
+// resolveSlug picks the slug for this capture. Returns the slug and
+// a boolean indicating whether it came from the timestamp default
+// (true) or from explicit user input via --slug / the interactive
+// prompt (false). The boolean drives the sub-second collision guard
+// in Run() — only timestamp-default slugs are protected against
+// silent overwrite, since the explicit-slug path is iteration on a
+// named milestone where pre-clean is intentional.
+//
+// Pre-Phase-2 builds cascaded through state.LastSlug → git branch →
+// composer name → timestamp; that cascade is gone. The convention
+// is now: snapshots accumulate under web/imports/ as timestamped
+// dirs, the chart's install Job picks latest by manifest.created,
+// and designers who want a milestone marker pass --slug=<name>.
+func resolveSlug(opts Options) (string, bool, error) {
 	// --slug short-circuits everything.
 	if opts.Slug != "" {
 		s := slugify(opts.Slug)
 		if s == "" {
-			return "", fmt.Errorf("--slug %q sanitises to empty; pick a value with at least one alphanumeric character", opts.Slug)
+			return "", false, fmt.Errorf("--slug %q sanitises to empty; pick a value with at least one alphanumeric character", opts.Slug)
 		}
-		return s, nil
+		return s, false, nil
 	}
 
-	// --quick uses a timestamped slug unconditionally.
+	// --quick uses a timestamped slug unconditionally, no prompt.
 	if opts.Quick {
-		return TimestampedSlug(opts.Now()), nil
+		return TimestampedSlug(opts.Now()), true, nil
 	}
 
 	def := DefaultSlug(opts)
 
 	if !opts.Interactive {
-		if def == "" {
-			return "", errors.New("no --slug provided and no default could be inferred (non-interactive)")
-		}
-		return def, nil
+		return def, true, nil
 	}
 
 	chosen, err := prompt.AskSlug(opts.Stdin, opts.Stdout, def)
 	if err != nil {
-		return "", err
+		return "", false, err
+	}
+	// An empty response means the designer accepted the default. We
+	// treat that as fromDefault=true so the collision guard still
+	// fires (Enter-Enter is exactly the "twice in the same second"
+	// case we want to catch).
+	if strings.TrimSpace(chosen) == "" {
+		return def, true, nil
 	}
 	s := slugify(chosen)
 	if s == "" {
-		return "", errors.New("slug sanitised to empty; pick a value with at least one alphanumeric character")
+		return "", false, errors.New("slug sanitised to empty; pick a value with at least one alphanumeric character")
 	}
-	return s, nil
+	if s == def {
+		return s, true, nil
+	}
+	return s, false, nil
 }
 
-// DefaultSlug computes the cascade default without prompting. Exposed
-// for tests + for the slug prompt's "[default]: " suggestion.
+// DefaultSlug returns the timestamp default for the current
+// invocation. Exposed for tests + for the slug prompt's "[default]: "
+// suggestion. The pre-Phase-2 cascade (state.LastSlug → git branch →
+// composer name → timestamp) has been replaced by an unconditional
+// timestamp — see resolveSlug() for context.
 func DefaultSlug(opts Options) string {
-	if opts.State != nil && opts.State.LastSlug != "" {
-		if s := slugify(opts.State.LastSlug); s != "" {
-			return s
-		}
-	}
-	if repo.IsGitRepo(opts.RepoRoot) {
-		if b := repo.BranchName(opts.RepoRoot); b != "" {
-			if s := slugify(b); s != "" {
-				return s
-			}
-		}
-	}
-	if name := repo.ComposerName(opts.RepoRoot); name != "" {
-		if s := slugify(name + "-launch"); s != "" {
-			return s
-		}
-	}
 	return TimestampedSlug(opts.Now())
 }
 
-// TimestampedSlug returns "snapshot-YYYYMMDD-HHMMSS" in UTC. The
-// --quick mode's unconditional fallback.
+// TimestampedSlug returns the slug for a default-named snapshot in
+// the shape YYYY-MM-DDTHH-MM-SSZ — UTC, filename-safe (the ISO 8601
+// ':' is replaced with '-'), and lex-sortable so `ls web/imports/`
+// is naturally chronological.
 func TimestampedSlug(t time.Time) string {
-	return "snapshot-" + t.UTC().Format("20060102-150405")
+	// Go's reference time: Mon Jan 2 15:04:05 MST 2006.
+	return t.UTC().Format("2006-01-02T15-04-05Z")
 }
 
 // resolveNote returns the note text, honouring --note / --note-file
