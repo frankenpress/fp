@@ -21,6 +21,7 @@ entry points.
 Current shipped surface (v0.5.0+, 2026-05-14):
 
   - `fp init` — one-command designer onboarding (bootstrap + up + WP install + apply latest)
+  - `fp up [args...]` / `fp down [args...]` / `fp restart [args...]` / `fp logs [args...]` — thin docker-compose verb wrappers; project resolved from `frankenpress.toml`, exit codes forwarded, flag parsing disabled so compose's own flags pass through. `fp up` is the only one with auto-prepended flags (`-d --wait`)
   - `fp snapshot` — capture local site state into `web/imports/<timestamp>/`
   - `fp apply [slug-or-path]` — stage + `wp fp apply` for round-trip iteration (no arg → latest)
   - `fp list` (alias `ls`) — host-side table of local snapshots (slug / created / counts / note), `--json` + `--limit`
@@ -44,11 +45,14 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   `diff.go`, `delete.go`, `prune.go`, `doctor.go`, `wp.go`,
   `release.go`, plus `validate.go` which is still a stub returning
   exit 2 and `Hidden: true` on the cobra command). Adding a verb is
-  one new file + one `cmd.AddCommand` line in `root.go`. `wp.go` is
-  the lone exception that holds logic (the runWP + parseWPFlags
-  helpers) rather than just wiring — extracting to its own package
-  would force exposing `exitCodeError`, and the surface is small
-  enough to live next to the cobra definition.
+  one new file + one `cmd.AddCommand` line in `root.go`. Two
+  exceptions hold logic alongside the cobra wiring: `wp.go` (runWP
+  + parseWPFlags helpers) and `compose.go` (the four docker-compose
+  verb wrappers — `fp up` / `down` / `restart` / `logs` — share a
+  single `newComposeVerbCmd` constructor + the `runCompose` exit-
+  code-forwarding helper). Extracting either to its own package
+  would force exposing `exitCodeError`, and both surfaces are small
+  enough to live next to the cobra definitions.
 - `internal/version/` — `Version` + `Commit` baked in via goreleaser
   `-ldflags`. `String()` falls back to `runtime/debug.ReadBuildInfo()`
   for local `go build` so `fp version` is always meaningful.
@@ -62,9 +66,15 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
 - `internal/docker/` — **the testability seam for container ops**.
   `Runner` interface with `ComposeExec` / `ComposeExecStreaming` /
   `Copy` / `PS` / `ComposeUp` / `ComposeBuild` / `ComposerInstall` /
-  `ComposeVersion`, one real `exec.Command`-based impl, and a
-  recording `Fake` for tests. fp does **not** link the Docker SDK
-  by design — auth + context + credential helpers are the user's
+  `ComposeVersion` / `ComposeRun`, one real `exec.Command`-based
+  impl, and a recording `Fake` for tests. `ComposeRun` is the
+  generic "shell to `docker compose --project-name X args...`"
+  used by the four passthrough wrappers in `internal/cli/compose.go`
+  (`fp up` / `down` / `restart` / `logs`); the verb-specific
+  methods exist for callers that need fixed semantics (e.g.
+  `ComposeUp` hardcodes `-d --wait` because `fp init` always wants
+  healthcheck-gated up). fp does **not** link the Docker SDK by
+  design — auth + context + credential helpers are the user's
   docker CLI's problem, not ours.
 - `internal/git/` — testability seam for git ops. `Runner` interface
   (`CurrentBranch` / `BranchExists` / `Checkout` / `Add` / `Commit` /

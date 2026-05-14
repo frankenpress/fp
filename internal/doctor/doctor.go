@@ -124,7 +124,7 @@ func checkComposeStack(ctx context.Context, opts Options) []check {
 		out = append(out, check{
 			name:    "service status",
 			value:   "not running",
-			hint:    "bring the stack up with `fp init` (fresh clone) or `docker compose up -d --wait` (already initialised)",
+			hint:    "bring the stack up with `fp up` (or `fp init` for a fresh clone)",
 			problem: true,
 		})
 	}

@@ -31,6 +31,10 @@ func NewRoot() *Root {
 
 	cmd.AddCommand(
 		newInitCmd(),
+		newUpCmd(),
+		newDownCmd(),
+		newRestartCmd(),
+		newLogsCmd(),
 		newSnapshotCmd(),
 		newApplyCmd(),
 		newListCmd(),
@@ -93,6 +97,10 @@ iteration, and ship the result via PR. It is a thin host-side ergonomics
 layer over the wp fp WP-CLI subcommands provided by frankenpress/mu-plugin.
 
   fp init                  one-command onboarding: bootstrap + up + apply latest
+  fp up [args...]          bring the local stack up (-d --wait auto-applied)
+  fp down [args...]        tear the local stack down
+  fp restart [args...]     restart services in the local stack
+  fp logs [args...]        print logs from the local stack
   fp snapshot              capture local site state into web/imports/<slug>/
   fp apply [dir-or-slug]   apply a snapshot back into the local stack
   fp list                  list local snapshots with manifest metadata
@@ -104,7 +112,9 @@ layer over the wp fp WP-CLI subcommands provided by frankenpress/mu-plugin.
   fp release               one-shot capture + commit + push + open PR
   fp version               print the binary version
 
-fp init brings the stack up itself. snapshot / apply / release expect
-docker-compose to already be running and shell out to docker compose
-exec. list / diff / delete / prune / doctor are pure host-side or
-read-only — they don't mutate the running stack.`
+fp init brings a fresh clone (or a post-down -v stack) to "ready to
+design" in one command. fp up / down / restart / logs are thin
+passthroughs to docker compose for the daily dev loop. snapshot /
+apply / release expect docker-compose to already be running and shell
+out to docker compose exec. list / diff / delete / prune / doctor are
+pure host-side or read-only — they don't mutate the running stack.`

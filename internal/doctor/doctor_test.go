@@ -90,8 +90,8 @@ func TestRun_ServiceNotRunning_ReportsHint(t *testing.T) {
 	if !strings.Contains(out, "issue(s) detected") {
 		t.Errorf("expected issue tally, got:\n%s", out)
 	}
-	if !strings.Contains(out, "docker compose up") {
-		t.Errorf("expected recovery hint pointing at docker compose up, got:\n%s", out)
+	if !strings.Contains(out, "fp up") {
+		t.Errorf("expected recovery hint pointing at fp up, got:\n%s", out)
 	}
 }
 
