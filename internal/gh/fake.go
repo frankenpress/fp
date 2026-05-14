@@ -11,6 +11,10 @@ type Fake struct {
 
 	PRViewURL string
 	PRViewErr error
+
+	AuthLoggedIn bool
+	AuthSummary  string
+	AuthErr      error
 }
 
 // Call records a single Runner invocation.
@@ -32,6 +36,11 @@ func (f *Fake) PRCreate(_ context.Context, _, title, body string) (string, error
 func (f *Fake) PRView(_ context.Context, _, branch string) (string, error) {
 	f.Calls = append(f.Calls, Call{Method: "PRView", Branch: branch})
 	return f.PRViewURL, f.PRViewErr
+}
+
+func (f *Fake) AuthStatus(_ context.Context) (bool, string, error) {
+	f.Calls = append(f.Calls, Call{Method: "AuthStatus"})
+	return f.AuthLoggedIn, f.AuthSummary, f.AuthErr
 }
 
 // CallCount returns how many times the named method was invoked.

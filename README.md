@@ -7,8 +7,8 @@ Designers iterate on a local WordPress in docker-compose, then use `fp` to
 **capture** that state (`fp snapshot`), **apply** captures back for round-trip
 iteration (`fp apply`), **list** local captures (`fp list`), **diff** two
 captures during review (`fp diff`), **prune** old captures (`fp prune` /
-`fp delete`), and **release** the result in one shot — commit, push, open
-PR (`fp release`).
+`fp delete`), check the local stack (`fp doctor`), and **release** the result
+in one shot — commit, push, open PR (`fp release`).
 
 Every bit of business logic (what to capture, schema versioning, apply
 semantics) lives in [`frankenpress/mu-plugin`](https://github.com/frankenpress/mu-plugin)'s
@@ -227,6 +227,27 @@ Neither command runs `git rm` — they only remove from the working
 tree. If the snapshot was committed, `git status` will show the
 removal as a normal pending change; commit it as part of your usual
 flow.
+
+### `fp doctor` — read-only local-stack health check
+
+```bash
+fp doctor
+```
+
+One command, no flags. Reports on every moving part the other
+subcommands depend on:
+
+- `fp` + `docker compose` versions
+- compose project / service detection + container status
+- latest snapshot in `web/imports/` + age, total snapshots on disk
+- `FP_S3_DISABLED` value from `.env` (designer-mode S3 vs local)
+- current git branch + uncommitted state under `web/imports/`
+- `gh auth status` summary (one line)
+
+Always exits 0 — doctor is a report, not a gate. Each "problem" check
+prints a one-line hint with the suggested recovery command; act on
+those yourself and re-run. Designed for "something seems off, let me
+get the lay of the land before targeting a fix."
 
 ### `fp release` — one-shot capture + commit + push + open PR
 

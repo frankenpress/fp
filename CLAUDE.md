@@ -27,6 +27,7 @@ Current shipped surface (v0.5.0+, 2026-05-14):
   - `fp diff <a> <b>` — structural delta between two committed snapshots
   - `fp delete <slug-or-path>` (alias `rm`) — remove a single snapshot; refuses dirs without `manifest.yaml` and refuses uncommitted git state unless `--quick`
   - `fp prune --keep N` — keep newest N by `manifest.created`, remove the rest; **dry-run by default**, pass `--apply` to act, `--quick` overrides the dirty guard
+  - `fp doctor` — read-only health check of the local stack (fp / compose versions, service status, latest snapshot, FP_S3_DISABLED, git state, `gh auth`); always exits 0; prints hints for any "problem" check
   - `fp release` — one-shot capture + commit + push + open PR
   - `fp validate <dir>` — still a stub; **hidden from `--help`** as of 2026-05-14 pending real implementation (Phase 12+ — strict schema validation)
   - `fp version` — version + commit
@@ -39,8 +40,8 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
 - `cmd/fp/main.go` — thin entrypoint, calls `cli.NewRoot().Run(os.Args[1:])`.
 - `internal/cli/` — cobra wiring. One file per subcommand
   (`root.go`, `version.go`, `snapshot.go`, `apply.go`, `list.go`,
-  `diff.go`, `delete.go`, `prune.go`, `release.go`, plus
-  `validate.go` which is still a stub returning exit 2 and
+  `diff.go`, `delete.go`, `prune.go`, `doctor.go`, `release.go`,
+  plus `validate.go` which is still a stub returning exit 2 and
   `Hidden: true` on the cobra command). Adding a verb is one new
   file + one `cmd.AddCommand` line in `root.go`.
 - `internal/version/` — `Version` + `Commit` baked in via goreleaser
@@ -54,18 +55,19 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   rename. Drops a `.fp/.gitignore` so per-machine slug history stays
   uncommitted.
 - `internal/docker/` — **the testability seam for container ops**.
-  `Runner` interface with four methods (`ComposeExec` /
-  `ComposeExecStreaming` / `Copy` / `PS`), one real `exec.Command`-based
-  impl, and a recording `Fake` for tests. fp does **not** link the
-  Docker SDK by design — auth + context + credential helpers are the
-  user's docker CLI's problem, not ours.
+  `Runner` interface with `ComposeExec` / `ComposeExecStreaming` /
+  `Copy` / `PS` / `ComposeUp` / `ComposeBuild` / `ComposerInstall` /
+  `ComposeVersion`, one real `exec.Command`-based impl, and a
+  recording `Fake` for tests. fp does **not** link the Docker SDK
+  by design — auth + context + credential helpers are the user's
+  docker CLI's problem, not ours.
 - `internal/git/` — testability seam for git ops. `Runner` interface
   (`CurrentBranch` / `BranchExists` / `Checkout` / `Add` / `Commit` /
   `Push`) + real impl + `Fake`. Used by `internal/release/`.
 - `internal/gh/` — testability seam for GitHub CLI. `Runner` interface
-  (`PRCreate` / `PRView`) + real impl + `Fake`. Used by
-  `internal/release/`. `gh` auth + context discovery is the user's
-  problem, not ours — same shape as `docker`.
+  (`PRCreate` / `PRView` / `AuthStatus`) + real impl + `Fake`. Used
+  by `internal/release/` and `internal/doctor/`. `gh` auth + context
+  discovery is the user's problem, not ours — same shape as `docker`.
 - `internal/compose/` — project + service detection. `DefaultProject`
   mirrors compose v2's basename-of-cwd default; `Check` maps
   PS output to a status enum that drives the Error-UX (a) hierarchy.
@@ -108,6 +110,14 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   `Quick` is set, and prints one line per removed entry. Prune is
   dry-run by default (`Apply` must be true to delete). Cobra aliases:
   `rm` for delete. Zero docker coupling.
+- `internal/doctor/` — read-only environment report for `fp doctor`.
+  `Run(ctx, opts)` builds a slice of `check{name, value, hint,
+  problem}` entries, renders a tabwriter-padded table, then lists
+  hints for any check that flagged `problem: true`. Always returns
+  nil — doctor reports, never gates. External calls route through
+  the existing `docker.Runner` (`ComposeVersion`, `PS` via
+  `compose.Check`) and `gh.Runner` (`AuthStatus`) seams so unit
+  tests substitute fakes and never touch the real CLIs.
 - `internal/release/` — composes `snapshot.Run` + `git.Runner` +
   `gh.Runner` + `prompt.Confirm` into the one-shot designer flow.
   Owns the branch policy (auto-create `feat/snapshot-<slug>` off

@@ -70,6 +70,13 @@ type Runner interface {
 	// don't need PHP / composer on the host. repoRoot is mounted
 	// at /app; vendor/ lands on the host filesystem.
 	ComposerInstall(ctx context.Context, repoRoot string, stdout, stderr io.Writer) error
+
+	// ComposeVersion runs `docker compose version --short` and
+	// returns the trimmed version string (e.g. "v2.31.0"). Used
+	// purely as diagnostic context by `fp doctor`. A non-nil error
+	// almost always means the docker CLI isn't installed or isn't
+	// on PATH.
+	ComposeVersion(ctx context.Context) (string, error)
 }
 
 // Container is a single entry from `docker compose ps --format json`.
@@ -264,6 +271,23 @@ func (r *realRunner) ComposerInstall(ctx context.Context, repoRoot string, stdou
 		return err
 	}
 	return nil
+}
+
+func (r *realRunner) ComposeVersion(ctx context.Context) (string, error) {
+	cmd := exec.CommandContext(ctx, "docker", "compose", "version", "--short")
+	cmd.Env = os.Environ()
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return "", &ExecError{
+				Cmd:      "docker compose version --short",
+				ExitCode: exitErr.ExitCode(),
+				Stderr:   exitErr.Stderr,
+			}
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func composeExecArgs(project, service string, args []string) []string {
