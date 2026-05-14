@@ -4,12 +4,13 @@ A small Go binary that wraps the [FrankenPress](https://github.com/frankenpress)
 designer-promotion lifecycle from the host side.
 
 Designers iterate on a local WordPress in docker-compose, then use `fp` to
-**capture** that state (`fp snapshot`), **apply** captures back for round-trip
-iteration (`fp apply`), **list** local captures (`fp list`), **diff** two
-captures during review (`fp diff`), **prune** old captures (`fp prune` /
-`fp delete`), check the local stack (`fp doctor`), run **wp-cli** against the
-running container (`fp wp`), and **release** the result in one shot — commit,
-push, open PR (`fp release`).
+drive the **stack** lifecycle (`fp up` / `down` / `restart` / `logs`),
+**capture** site state (`fp snapshot`), **apply** captures back for
+round-trip iteration (`fp apply`), **list** local captures (`fp list`),
+**diff** two captures during review (`fp diff`), **prune** old captures
+(`fp prune` / `fp delete`), check the local stack (`fp doctor`), run
+**wp-cli** against the running container (`fp wp`), and **release** the
+result in one shot — commit, push, open PR (`fp release`).
 
 Every bit of business logic (what to capture, schema versioning, apply
 semantics) lives in [`frankenpress/mu-plugin`](https://github.com/frankenpress/mu-plugin)'s
@@ -88,6 +89,29 @@ from zip" buttons don't work (the `s3://` stream wrapper doesn't support every
 `ZipArchive` op). Designers rarely need that path; if you do, set
 `FP_S3_DISABLED=1` in `.env` and re-run `fp init`, or use
 `composer require wpackagist-plugin/<slug>` (the FrankenPress canonical install path).
+
+### `fp up` / `fp down` / `fp restart` / `fp logs` — drive the local stack
+
+Thin passthroughs to `docker compose <verb>`. Resolve the project name from
+`frankenpress.toml`'s `[snapshot].project` (or `basename(repo-root)` by
+default), forward exit codes, pass user flags through untouched.
+
+```bash
+fp up                       # daily startup; -d --wait pre-applied
+fp up --build               # rebuild images first
+fp down                     # tear it down
+fp down -v                  # nuke volumes too (full reset)
+fp restart site             # restart one service
+fp logs -f site             # follow one service's logs
+fp logs --tail 200          # cap to the last 200 lines
+```
+
+`fp up` is the only verb with an auto-prepended flag set — `-d --wait`,
+which is the daily-driver "detached + gate on healthchecks" path. The
+other three are pure passthroughs; whatever flags `docker compose` accepts
+work unchanged. Use `docker compose up` directly if you want a foreground
+stack (interactive logs) — `fp up` is the convenient default, not a wrapper
+around every compose-up shape.
 
 ### `fp snapshot` — capture local site state
 

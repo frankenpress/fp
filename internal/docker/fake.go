@@ -33,6 +33,7 @@ type Fake struct {
 	ComposeUpErr       error
 	ComposeBuildErr    error
 	ComposerInstallErr error
+	ComposeRunErr      error
 
 	ComposeVersionString string
 	ComposeVersionErr    error
@@ -46,6 +47,7 @@ type Fake struct {
 	ComposeBuildFunc    func(ctx context.Context, project, service string, stdout, stderr io.Writer) error
 	ComposerInstallFunc func(ctx context.Context, repoRoot string, stdout, stderr io.Writer) error
 	ComposeVersionFunc  func(ctx context.Context) (string, error)
+	ComposeRunFunc      func(ctx context.Context, project string, args []string, stdout, stderr io.Writer) error
 }
 
 // Call records a single Runner invocation.
@@ -157,6 +159,18 @@ func (f *Fake) ComposeVersion(ctx context.Context) (string, error) {
 		return f.ComposeVersionFunc(ctx)
 	}
 	return f.ComposeVersionString, f.ComposeVersionErr
+}
+
+func (f *Fake) ComposeRun(ctx context.Context, project string, args []string, stdout, stderr io.Writer) error {
+	f.Calls = append(f.Calls, Call{
+		Method:  "ComposeRun",
+		Project: project,
+		Args:    append([]string(nil), args...),
+	})
+	if f.ComposeRunFunc != nil {
+		return f.ComposeRunFunc(ctx, project, args, stdout, stderr)
+	}
+	return f.ComposeRunErr
 }
 
 // CallCount returns how many times the named method was invoked.

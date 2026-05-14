@@ -77,6 +77,14 @@ type Runner interface {
 	// almost always means the docker CLI isn't installed or isn't
 	// on PATH.
 	ComposeVersion(ctx context.Context) (string, error)
+
+	// ComposeRun runs `docker compose --project-name <project>
+	// <args...>` with the caller's stdout/stderr piped through.
+	// Generic shape for the thin compose-verb wrappers (fp up /
+	// down / logs / restart) that pass user flags through to
+	// docker compose untouched. Non-zero exit produces an
+	// *ExecError so callers can forward the exit code.
+	ComposeRun(ctx context.Context, project string, args []string, stdout, stderr io.Writer) error
 }
 
 // Container is a single entry from `docker compose ps --format json`.
@@ -265,6 +273,28 @@ func (r *realRunner) ComposerInstall(ctx context.Context, repoRoot string, stdou
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return &ExecError{
 				Cmd:      "docker " + strings.Join(args, " "),
+				ExitCode: exitErr.ExitCode(),
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func (r *realRunner) ComposeRun(ctx context.Context, project string, args []string, stdout, stderr io.Writer) error {
+	full := []string{"compose"}
+	if project != "" {
+		full = append(full, "--project-name", project)
+	}
+	full = append(full, args...)
+	cmd := exec.CommandContext(ctx, "docker", full...)
+	cmd.Env = os.Environ()
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return &ExecError{
+				Cmd:      "docker " + strings.Join(full, " "),
 				ExitCode: exitErr.ExitCode(),
 			}
 		}
