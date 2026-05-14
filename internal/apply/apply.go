@@ -52,17 +52,29 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.Stderr == nil {
 		opts.Stderr = io.Discard
 	}
-	if opts.Target == "" {
-		return errors.New("apply requires a snapshot dir or slug (e.g. `fp apply sts-launch` or `fp apply web/imports/sts-launch`)")
-	}
 
 	service := firstNonEmpty(opts.Service, opts.Config.Snapshot.Service, "site")
 	project := firstNonEmpty(opts.Project, opts.Config.Snapshot.Project, compose.DefaultProject(opts.RepoRoot))
 	outputDir := firstNonEmpty(opts.Config.Snapshot.OutputDir, "web/imports")
 
-	hostSnapshotDir, relToRoot, err := resolveSnapshotDir(opts.RepoRoot, outputDir, opts.Target)
-	if err != nil {
-		return err
+	// No positional → pick the latest snapshot by manifest.created.
+	// Same pick-latest semantics the charts install Job uses, so
+	// `fp apply` (locally) and the in-cluster apply target the same
+	// snapshot from the same source of truth (the `created` field).
+	var hostSnapshotDir, relToRoot string
+	var err error
+	if opts.Target == "" {
+		slug, dir, perr := PickLatest(opts.RepoRoot, outputDir)
+		if perr != nil {
+			return perr
+		}
+		hostSnapshotDir = dir
+		relToRoot = filepath.Join(outputDir, slug)
+	} else {
+		hostSnapshotDir, relToRoot, err = resolveSnapshotDir(opts.RepoRoot, outputDir, opts.Target)
+		if err != nil {
+			return err
+		}
 	}
 
 	manifestPath := filepath.Join(hostSnapshotDir, "manifest.yaml")
