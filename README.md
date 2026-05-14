@@ -6,8 +6,9 @@ designer-promotion lifecycle from the host side.
 Designers iterate on a local WordPress in docker-compose, then use `fp` to
 **capture** that state (`fp snapshot`), **apply** captures back for round-trip
 iteration (`fp apply`), **list** local captures (`fp list`), **diff** two
-captures during review (`fp diff`), and **release** the result in one shot —
-commit, push, open PR (`fp release`).
+captures during review (`fp diff`), **prune** old captures (`fp prune` /
+`fp delete`), and **release** the result in one shot — commit, push, open
+PR (`fp release`).
 
 Every bit of business logic (what to capture, schema versioning, apply
 semantics) lives in [`frankenpress/mu-plugin`](https://github.com/frankenpress/mu-plugin)'s
@@ -186,6 +187,46 @@ cross-snapshot comparison.
 
 The "current site state vs committed snapshot" mode is **not** in v0.4.x — it
 needs a future mu-plugin "dump scope without writing files" command.
+
+### `fp delete <slug-or-path>` / `fp prune --keep N` — companions to accumulation
+
+```bash
+fp delete sts-launch                # remove one snapshot by slug
+fp rm  web/imports/sts-launch       # `rm` alias, relative path
+fp prune --keep 5                   # dry-run: list what would go
+fp prune --keep 5 --apply           # actually remove the older ones
+fp prune --keep 0 --apply           # remove every snapshot (rare)
+```
+
+Two host-side cleanup verbs for the timestamp-slug accumulation model.
+`fp delete` removes a single named target; `fp prune` keeps the newest
+N snapshots (by `manifest.created`) and removes the rest.
+
+**Safety:**
+
+- Both refuse if the target directory has no `manifest.yaml` — the
+  "is this even a snapshot dir?" check.
+- Both refuse if the target has uncommitted git changes. Pass
+  `--quick` to override — the project's single safety-bypass flag,
+  same precedent as `fp snapshot --quick`.
+- `fp prune` is **dry-run by default**. You must pass `--apply` to
+  actually delete. `fp delete` acts immediately (you named a specific
+  slug).
+- Both print one line per removed entry — terminal scrollback is
+  your audit trail.
+
+| Command / Flag | What it does |
+|---|---|
+| `fp delete <target>` | Remove a single snapshot by bare slug, relative path, or absolute path (same resolution as `fp apply` / `fp diff`). Must be inside the repo root. |
+| `fp rm` | Built-in alias for `fp delete`. |
+| `fp prune --keep N` | Required. Keep the newest N by `manifest.created`. `0` = remove all. |
+| `fp prune --apply` | Actually perform the deletions. Without this, prune is a preview. |
+| `--quick` | (Both commands.) Skip the uncommitted-changes guard. |
+
+Neither command runs `git rm` — they only remove from the working
+tree. If the snapshot was committed, `git status` will show the
+removal as a normal pending change; commit it as part of your usual
+flow.
 
 ### `fp release` — one-shot capture + commit + push + open PR
 

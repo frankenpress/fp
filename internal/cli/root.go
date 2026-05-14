@@ -35,6 +35,8 @@ func NewRoot() *Root {
 		newApplyCmd(),
 		newListCmd(),
 		newDiffCmd(),
+		newDeleteCmd(),
+		newPruneCmd(),
 		newValidateCmd(),
 		newReleaseCmd(),
 		newVersionCmd(),
@@ -93,9 +95,12 @@ layer over the wp fp WP-CLI subcommands provided by frankenpress/mu-plugin.
   fp apply [dir-or-slug]   apply a snapshot back into the local stack
   fp list                  list local snapshots with manifest metadata
   fp diff <a> <b>          structural delta between two committed snapshots
+  fp delete <dir-or-slug>  remove a single local snapshot
+  fp prune --keep N        keep the newest N snapshots, remove the rest
   fp release               one-shot capture + commit + push + open PR
   fp version               print the binary version
 
 fp init brings the stack up itself. snapshot / apply / release expect
 docker-compose to already be running and shell out to docker compose
-exec. list and diff are pure host-side — they only read web/imports/.`
+exec. list / diff / delete / prune are pure host-side — they only
+touch web/imports/.`
