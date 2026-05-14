@@ -16,9 +16,10 @@ import (
 
 // Runner abstracts the gh operations fp release + fp doctor need.
 type Runner interface {
-	// PRCreate runs `gh pr create --title <t> --body <b>` and returns
-	// the URL gh prints on success.
-	PRCreate(ctx context.Context, repoRoot, title, body string) (url string, err error)
+	// PRCreate runs `gh pr create --title <t> --body <b>` (plus
+	// --draft when draft is true) and returns the URL gh prints on
+	// success.
+	PRCreate(ctx context.Context, repoRoot, title, body string, draft bool) (url string, err error)
 	// PRView looks up a PR for the named branch. Returns "" if no PR
 	// exists (gh prints a "no pull requests found" error in that case
 	// — we treat it as a soft signal, not a hard error).
@@ -74,8 +75,12 @@ func (r *realRunner) run(ctx context.Context, repoRoot string, args ...string) (
 	return out.Bytes(), errBuf.Bytes(), nil
 }
 
-func (r *realRunner) PRCreate(ctx context.Context, repoRoot, title, body string) (string, error) {
-	out, _, err := r.run(ctx, repoRoot, "pr", "create", "--title", title, "--body", body)
+func (r *realRunner) PRCreate(ctx context.Context, repoRoot, title, body string, draft bool) (string, error) {
+	args := []string{"pr", "create", "--title", title, "--body", body}
+	if draft {
+		args = append(args, "--draft")
+	}
+	out, _, err := r.run(ctx, repoRoot, args...)
 	if err != nil {
 		return "", err
 	}

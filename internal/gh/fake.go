@@ -23,13 +23,14 @@ type Call struct {
 	Title  string
 	Body   string
 	Branch string
+	Draft  bool
 }
 
 // NewFake returns an empty Fake.
 func NewFake() *Fake { return &Fake{} }
 
-func (f *Fake) PRCreate(_ context.Context, _, title, body string) (string, error) {
-	f.Calls = append(f.Calls, Call{Method: "PRCreate", Title: title, Body: body})
+func (f *Fake) PRCreate(_ context.Context, _, title, body string, draft bool) (string, error) {
+	f.Calls = append(f.Calls, Call{Method: "PRCreate", Title: title, Body: body, Draft: draft})
 	return f.PRCreateURL, f.PRCreateErr
 }
 
