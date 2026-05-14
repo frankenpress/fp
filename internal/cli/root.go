@@ -30,6 +30,7 @@ func NewRoot() *Root {
 	}
 
 	cmd.AddCommand(
+		newInitCmd(),
 		newSnapshotCmd(),
 		newApplyCmd(),
 		newDiffCmd(),
@@ -81,17 +82,19 @@ func errNotImplemented(verb string) error {
 	}
 }
 
-const rootLong = `fp wraps the FrankenPress designer-promotion lifecycle: capture local site
-state, apply snapshots back for round-trip iteration, and ship the result
-via PR. It is a thin host-side ergonomics layer over the wp fp WP-CLI
-subcommands provided by frankenpress/mu-plugin.
+const rootLong = `fp wraps the FrankenPress designer-promotion lifecycle: bootstrap a fresh
+clone, capture local site state, apply snapshots back for round-trip
+iteration, and ship the result via PR. It is a thin host-side ergonomics
+layer over the wp fp WP-CLI subcommands provided by frankenpress/mu-plugin.
 
+  fp init                  one-command onboarding: bootstrap + up + apply latest
   fp snapshot              capture local site state into web/imports/<slug>/
-  fp apply <dir-or-slug>   apply a snapshot back into the local stack
+  fp apply [dir-or-slug]   apply a snapshot back into the local stack
   fp diff <a> <b>          structural delta between two committed snapshots
   fp release               one-shot capture + commit + push + open PR
   fp validate <dir>        validate a snapshot's manifest schema (future)
   fp version               print the binary version
 
-The designer's docker-compose stack must already be running (make up).
-fp does not bring the stack up; it shells out to docker compose exec.`
+fp init brings the stack up itself. snapshot / apply / diff / release
+expect docker-compose to already be running and shell out to
+docker compose exec.`

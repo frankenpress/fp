@@ -53,6 +53,7 @@ type Config struct {
 	Path     string
 
 	Snapshot SnapshotConfig
+	Init     InitConfig
 }
 
 // SnapshotConfig mirrors the [snapshot] TOML section. Every key is
@@ -77,6 +78,34 @@ type SnapshotConfig struct {
 	ContainerOutputDir string `toml:"container_output_dir"`
 }
 
+// InitConfig mirrors the [init] TOML section. Every key is optional;
+// zero values mean "use the fp init default" and the setup
+// orchestrator fills them in. These knobs are local-dev conveniences;
+// production deploys don't touch them (cluster installs land via the
+// chart's siteInstall.* values).
+type InitConfig struct {
+	// SiteTitle is the value passed to `wp core install --title=...`
+	// on a fresh DB. Defaults to "FrankenPress site".
+	SiteTitle string `toml:"site_title"`
+	// AdminUser is the WP admin login on a fresh DB. Defaults to
+	// "admin" — local-only convenience. Override for any environment
+	// other than docker-compose-on-a-laptop.
+	AdminUser string `toml:"admin_user"`
+	// AdminPassword is the WP admin password on a fresh DB. Defaults
+	// to "admin". Same local-only-convenience caveat.
+	AdminPassword string `toml:"admin_password"`
+	// AdminEmail is the WP admin email on a fresh DB. Defaults to
+	// "admin@example.test".
+	AdminEmail string `toml:"admin_email"`
+	// DisableS3, when true, tells fp init NOT to write
+	// FP_S3_DISABLED=0 into .env. Use this when you specifically
+	// want the container's local-disk uploads path (e.g. you're
+	// iterating on a wp-admin plugin installer that doesn't work
+	// under the s3:// stream wrapper). Default false → fp init
+	// enables designer-mode S3 (MinIO).
+	DisableS3 bool `toml:"disable_s3"`
+}
+
 // Defaults returns a SnapshotConfig with every default filled in,
 // useful for tests and as the baseline merged onto an empty file.
 func Defaults() SnapshotConfig {
@@ -87,10 +116,24 @@ func Defaults() SnapshotConfig {
 	}
 }
 
+// DefaultsInit returns the InitConfig defaults. Separate function so
+// callers that want them independently of the snapshot defaults can
+// grab one without the other.
+func DefaultsInit() InitConfig {
+	return InitConfig{
+		SiteTitle:     "FrankenPress site",
+		AdminUser:     "admin",
+		AdminPassword: "admin",
+		AdminEmail:    "admin@example.test",
+		DisableS3:     false,
+	}
+}
+
 // rawConfig is the on-disk TOML shape. Other sections ([site],
 // [signers]) are tolerated and discarded — fp doesn't care about them.
 type rawConfig struct {
 	Snapshot SnapshotConfig `toml:"snapshot"`
+	Init     InitConfig     `toml:"init"`
 }
 
 // Load walks up from startDir (or cwd when empty), parses
@@ -115,6 +158,7 @@ func Load(startDir string) (*Config, error) {
 		RepoRoot: repoRoot,
 		Path:     tomlPath,
 		Snapshot: Defaults(),
+		Init:     DefaultsInit(),
 	}
 
 	if tomlPath == "" {
@@ -132,7 +176,27 @@ func Load(startDir string) (*Config, error) {
 	}
 
 	mergeSnapshot(&cfg.Snapshot, raw.Snapshot)
+	mergeInit(&cfg.Init, raw.Init)
 	return cfg, nil
+}
+
+func mergeInit(dst *InitConfig, src InitConfig) {
+	if src.SiteTitle != "" {
+		dst.SiteTitle = src.SiteTitle
+	}
+	if src.AdminUser != "" {
+		dst.AdminUser = src.AdminUser
+	}
+	if src.AdminPassword != "" {
+		dst.AdminPassword = src.AdminPassword
+	}
+	if src.AdminEmail != "" {
+		dst.AdminEmail = src.AdminEmail
+	}
+	if src.DisableS3 {
+		// Only respect true; default false survives.
+		dst.DisableS3 = true
+	}
 }
 
 // findUp walks from start up to "/" looking for frankenpress.toml

@@ -46,6 +46,30 @@ type Runner interface {
 	// running + stopped containers so the snapshot orchestrator can
 	// distinguish "stack is down" from "wrong project name".
 	PS(ctx context.Context, project string) ([]Container, error)
+
+	// ComposeUp runs `docker compose --project-name <project>
+	// up -d --wait`. Streams build output, container creation, and
+	// healthcheck-wait progress to the caller's writers so designers
+	// see the stack come alive in real time. The --wait flag gates
+	// on every service's healthcheck (or readiness, when no
+	// healthcheck is defined) before returning. Used by `fp init`
+	// to bring a fresh stack from cold to ready in one command.
+	ComposeUp(ctx context.Context, project string, stdout, stderr io.Writer) error
+
+	// ComposeBuild runs `docker compose --project-name <project>
+	// build <service>`. Streams the BuildKit output to the caller's
+	// writers (builds are verbose; designers expect to see layer
+	// progress). Used by `fp init` when the site image hasn't been
+	// built yet for the local stack.
+	ComposeBuild(ctx context.Context, project, service string, stdout, stderr io.Writer) error
+
+	// ComposerInstall runs `docker run --rm -v <repoRoot>:/app
+	// -w /app composer:2 install --prefer-dist --no-interaction
+	// --no-progress`. Mirrors site-template's Makefile `setup`
+	// target — composer is invoked in a container so designers
+	// don't need PHP / composer on the host. repoRoot is mounted
+	// at /app; vendor/ lands on the host filesystem.
+	ComposerInstall(ctx context.Context, repoRoot string, stdout, stderr io.Writer) error
 }
 
 // Container is a single entry from `docker compose ps --format json`.
@@ -169,6 +193,77 @@ func (r *realRunner) PS(ctx context.Context, project string) ([]Container, error
 		return nil, ee
 	}
 	return parsePS(outBuf.Bytes())
+}
+
+func (r *realRunner) ComposeUp(ctx context.Context, project string, stdout, stderr io.Writer) error {
+	args := []string{"compose"}
+	if project != "" {
+		args = append(args, "--project-name", project)
+	}
+	args = append(args, "up", "-d", "--wait")
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Env = os.Environ()
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return &ExecError{
+				Cmd:      "docker " + strings.Join(args, " "),
+				ExitCode: exitErr.ExitCode(),
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func (r *realRunner) ComposeBuild(ctx context.Context, project, service string, stdout, stderr io.Writer) error {
+	args := []string{"compose"}
+	if project != "" {
+		args = append(args, "--project-name", project)
+	}
+	args = append(args, "build", service)
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Env = os.Environ()
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return &ExecError{
+				Cmd:      "docker " + strings.Join(args, " "),
+				ExitCode: exitErr.ExitCode(),
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func (r *realRunner) ComposerInstall(ctx context.Context, repoRoot string, stdout, stderr io.Writer) error {
+	// Matches site-template's Makefile setup target verbatim so
+	// designers see the same behaviour whether they `make setup` or
+	// `fp init`.
+	args := []string{
+		"run", "--rm",
+		"-v", repoRoot + ":/app",
+		"-w", "/app",
+		"composer:2",
+		"install", "--prefer-dist", "--no-interaction", "--no-progress",
+	}
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Env = os.Environ()
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return &ExecError{
+				Cmd:      "docker " + strings.Join(args, " "),
+				ExitCode: exitErr.ExitCode(),
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func composeExecArgs(project, service string, args []string) []string {
