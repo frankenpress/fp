@@ -2,7 +2,6 @@ package apply
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/frankenpress/fp/internal/summary"
@@ -14,9 +13,9 @@ import (
 // lex-sortable).
 //
 // Used by `fp apply` when invoked with no positional arg, and by
-// future `fp init` (the designer-onboarding command). Both want the
-// same "what's the latest committed snapshot" answer — keeping it
-// in one place stops the two callers from drifting.
+// `fp init` (the designer-onboarding command). Both want the same
+// "what's the latest committed snapshot" answer — the underlying walk
+// lives in summary.Walk() so list/prune share the same source of truth.
 //
 // Returns an error when:
 //   - <repoRoot>/<outputDir>/ does not exist or is not readable
@@ -25,41 +24,23 @@ import (
 //
 // Subdirectories without a manifest.yaml are silently skipped — they
 // might be .gitkeep stubs, half-deleted dirs, or other detritus.
-// Subdirectories whose manifest fails to parse OR is missing `created`
-// are also skipped (the chart's install Job applies the same
-// tolerance).
+// Manifests without a `created` field are walked (so `fp list` can
+// surface them) but skipped here.
 func PickLatest(repoRoot, outputDir string) (slug, hostDir string, err error) {
-	dir := filepath.Join(repoRoot, outputDir)
-	entries, err := os.ReadDir(dir)
+	entries, err := summary.Walk(repoRoot, outputDir)
 	if err != nil {
-		return "", "", fmt.Errorf("read %s: %w", dir, err)
+		return "", "", err
 	}
-
-	var bestSlug, bestDir, bestCreated string
+	// summary.Walk sorts by Created desc with empty-Created last, so
+	// the first non-empty-Created entry is the latest.
 	for _, e := range entries {
-		if !e.IsDir() {
+		if e.Manifest.Created == "" {
 			continue
 		}
-		manifestPath := filepath.Join(dir, e.Name(), "manifest.yaml")
-		m, err := summary.Read(manifestPath)
-		if err != nil {
-			continue
-		}
-		if m.Created == "" {
-			continue
-		}
-		if bestCreated == "" || m.Created > bestCreated {
-			bestCreated = m.Created
-			bestSlug = e.Name()
-			bestDir = filepath.Join(dir, e.Name())
-		}
+		return e.Slug, e.HostDir, nil
 	}
-
-	if bestSlug == "" {
-		return "", "", fmt.Errorf(
-			"no snapshot dir with a parseable manifest.yaml (and a `created` field) found under %s. capture one with `fp snapshot` first",
-			dir,
-		)
-	}
-	return bestSlug, bestDir, nil
+	return "", "", fmt.Errorf(
+		"no snapshot dir with a parseable manifest.yaml (and a `created` field) found under %s. capture one with `fp snapshot` first",
+		filepath.Join(repoRoot, outputDir),
+	)
 }
