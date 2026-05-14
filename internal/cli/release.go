@@ -21,6 +21,7 @@ func newReleaseCmd() *cobra.Command {
 		noteFile string
 		branch   string
 		noPR     bool
+		draft    bool
 		yes      bool
 	)
 
@@ -43,6 +44,7 @@ Commit shape:
 
 Pass --yes to skip the commit-confirm prompt (useful in scripts).
 Pass --no-pr to commit and push without opening a PR.
+Pass --draft to open the PR as a draft (mutually exclusive with --no-pr).
 
 Designed for the canonical "I'm done iterating, ship it" path. For
 ad-hoc captures use fp snapshot directly.`,
@@ -67,6 +69,7 @@ ad-hoc captures use fp snapshot directly.`,
 				NoteFile:     noteFile,
 				Branch:       branch,
 				NoPR:         noPR,
+				Draft:        draft,
 				Yes:          yes,
 				RepoRoot:     cfg.RepoRoot,
 				Config:       cfg,
@@ -88,7 +91,9 @@ ad-hoc captures use fp snapshot directly.`,
 	cmd.Flags().StringVar(&noteFile, "note-file", "", "Read the designer note from a file.")
 	cmd.Flags().StringVar(&branch, "branch", "", "Target branch (default: current, or feat/snapshot-<slug> from a protected branch).")
 	cmd.Flags().BoolVar(&noPR, "no-pr", false, "Skip the gh pr create step.")
+	cmd.Flags().BoolVar(&draft, "draft", false, "Open the PR as draft (gh pr create --draft).")
 	cmd.Flags().BoolVar(&yes, "yes", false, "Skip the commit-confirm prompt.")
+	cmd.MarkFlagsMutuallyExclusive("no-pr", "draft")
 
 	return cmd
 }

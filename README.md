@@ -7,8 +7,9 @@ Designers iterate on a local WordPress in docker-compose, then use `fp` to
 **capture** that state (`fp snapshot`), **apply** captures back for round-trip
 iteration (`fp apply`), **list** local captures (`fp list`), **diff** two
 captures during review (`fp diff`), **prune** old captures (`fp prune` /
-`fp delete`), check the local stack (`fp doctor`), and **release** the result
-in one shot — commit, push, open PR (`fp release`).
+`fp delete`), check the local stack (`fp doctor`), run **wp-cli** against the
+running container (`fp wp`), and **release** the result in one shot — commit,
+push, open PR (`fp release`).
 
 Every bit of business logic (what to capture, schema versioning, apply
 semantics) lives in [`frankenpress/mu-plugin`](https://github.com/frankenpress/mu-plugin)'s
@@ -249,12 +250,41 @@ prints a one-line hint with the suggested recovery command; act on
 those yourself and re-run. Designed for "something seems off, let me
 get the lay of the land before targeting a fix."
 
+### `fp wp <args...>` — wp-cli passthrough
+
+```bash
+fp wp option get blogname
+fp wp plugin list --status=active
+fp wp post list --format=json
+fp wp help post                           # wp-cli's own help
+fp wp --service custom -- post list       # ad-hoc service override
+```
+
+Thin ergonomic wrapper around `docker compose exec <service> wp ...`. Resolves
+project + service from `frankenpress.toml`'s `[snapshot]` block, prepends
+`--allow-root --path=/app/web/wp` so designers don't need to remember either
+flag, and streams wp-cli's stdout / stderr verbatim. wp-cli's exit code is
+forwarded, so scripts can treat `fp wp` like a thin alias.
+
+Flag parsing for wp-cli args is **disabled** — anything after `fp wp` goes
+straight through to wp-cli untouched. Two fp-specific overrides are honoured
+when they appear before any wp-cli argument (or before a `--` terminator):
+
+| Flag | What it does |
+|---|---|
+| `--service <s>` / `--service=<s>` | Override `[snapshot].service` for this run. |
+| `--project <s>` / `--project=<s>` | Override `[snapshot].project` for this run. |
+
+If the stack isn't up, `fp wp` reports the same "make up first" hint
+`fp snapshot` / `fp apply` use.
+
 ### `fp release` — one-shot capture + commit + push + open PR
 
 ```bash
 fp release                # interactive: slug + note prompts, then commit-confirm
 fp release --yes          # skip the commit-confirm prompt
 fp release --no-pr        # commit + push, no gh pr create
+fp release --draft        # gh pr create --draft (mutually exclusive with --no-pr)
 fp release --branch X     # override the branch policy
 ```
 
@@ -275,6 +305,10 @@ Every step's error message carries a manual continuation command if recovery
 is needed (push failed → "retry the push manually, then `gh pr create`").
 PR-already-exists is detected via `gh pr view` and surfaces the existing URL
 instead of erroring.
+
+`--draft` opens the PR as a draft (`gh pr create --draft`) — useful for "I
+want to push so CI runs but reviewers shouldn't get pinged yet." Mutually
+exclusive with `--no-pr` (cobra rejects both together at flag-parse time).
 
 `--yes` skips only the "commit and push?" confirmation prompt; it is **not** a
 safety bypass.

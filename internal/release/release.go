@@ -53,6 +53,7 @@ type Options struct {
 	// Release-specific.
 	Branch string // override default branch policy
 	NoPR   bool
+	Draft  bool // open the PR as draft (gh pr create --draft)
 	Yes    bool // skip the commit-confirm prompt
 
 	// Composed dependencies.
@@ -148,7 +149,11 @@ func Run(ctx context.Context, opts Options) error {
 		fmt.Fprintf(opts.Stdout, "  add:     %s\n", addPath)
 		fmt.Fprintf(opts.Stdout, "  subject: %s\n", firstLine(commitMsg))
 		if !opts.NoPR {
-			fmt.Fprintf(opts.Stdout, "  pr:      will run gh pr create after push\n")
+			if opts.Draft {
+				fmt.Fprintf(opts.Stdout, "  pr:      will run gh pr create --draft after push\n")
+			} else {
+				fmt.Fprintf(opts.Stdout, "  pr:      will run gh pr create after push\n")
+			}
 		}
 		ok, err := prompt.Confirm(opts.Stdin, opts.Stdout, "continue?")
 		if err != nil {
@@ -183,7 +188,7 @@ func Run(ctx context.Context, opts Options) error {
 	if !opts.NoPR {
 		title := fmt.Sprintf("snapshot: %s", slug)
 		body := buildPRBody(slug, note, m)
-		url, err := opts.GHRunner.PRCreate(ctx, opts.RepoRoot, title, body)
+		url, err := opts.GHRunner.PRCreate(ctx, opts.RepoRoot, title, body, opts.Draft)
 		if err != nil {
 			// PR creation failure usually means a PR already exists.
 			// Try to look it up and print the URL so the designer
@@ -193,10 +198,18 @@ func Run(ctx context.Context, opts Options) error {
 				fmt.Fprintf(opts.Stdout, "[fp] existing PR for %s: %s\n", targetBranch, existing)
 				return nil
 			}
-			return fmt.Errorf("gh pr create: %w\n  hint: commit + push succeeded; create the PR manually with `gh pr create --title %q`",
-				err, title)
+			retryCmd := "gh pr create --title " + fmt.Sprintf("%q", title)
+			if opts.Draft {
+				retryCmd += " --draft"
+			}
+			return fmt.Errorf("gh pr create: %w\n  hint: commit + push succeeded; create the PR manually with `%s`",
+				err, retryCmd)
 		}
-		fmt.Fprintf(opts.Stdout, "[fp] opened PR: %s\n", url)
+		if opts.Draft {
+			fmt.Fprintf(opts.Stdout, "[fp] opened draft PR: %s\n", url)
+		} else {
+			fmt.Fprintf(opts.Stdout, "[fp] opened PR: %s\n", url)
+		}
 	} else {
 		fmt.Fprintln(opts.Stdout, "[fp] --no-pr — skipping gh pr create. push it manually when ready.")
 	}

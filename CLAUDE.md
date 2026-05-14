@@ -28,7 +28,8 @@ Current shipped surface (v0.5.0+, 2026-05-14):
   - `fp delete <slug-or-path>` (alias `rm`) — remove a single snapshot; refuses dirs without `manifest.yaml` and refuses uncommitted git state unless `--quick`
   - `fp prune --keep N` — keep newest N by `manifest.created`, remove the rest; **dry-run by default**, pass `--apply` to act, `--quick` overrides the dirty guard
   - `fp doctor` — read-only health check of the local stack (fp / compose versions, service status, latest snapshot, FP_S3_DISABLED, git state, `gh auth`); always exits 0; prints hints for any "problem" check
-  - `fp release` — one-shot capture + commit + push + open PR
+  - `fp wp <args...>` — thin passthrough to wp-cli inside the running site container; prepends `--allow-root --path=/app/web/wp`; flag parsing disabled so wp's own flags route through untouched; `--service` / `--project` overrides honoured before the wp-cli args (or before a `--` terminator); wp-cli's exit code is forwarded
+  - `fp release` — one-shot capture + commit + push + open PR (`--draft` opens the PR as draft via `gh pr create --draft`; mutually exclusive with `--no-pr`)
   - `fp validate <dir>` — still a stub; **hidden from `--help`** as of 2026-05-14 pending real implementation (Phase 12+ — strict schema validation)
   - `fp version` — version + commit
 
@@ -40,10 +41,14 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
 - `cmd/fp/main.go` — thin entrypoint, calls `cli.NewRoot().Run(os.Args[1:])`.
 - `internal/cli/` — cobra wiring. One file per subcommand
   (`root.go`, `version.go`, `snapshot.go`, `apply.go`, `list.go`,
-  `diff.go`, `delete.go`, `prune.go`, `doctor.go`, `release.go`,
-  plus `validate.go` which is still a stub returning exit 2 and
-  `Hidden: true` on the cobra command). Adding a verb is one new
-  file + one `cmd.AddCommand` line in `root.go`.
+  `diff.go`, `delete.go`, `prune.go`, `doctor.go`, `wp.go`,
+  `release.go`, plus `validate.go` which is still a stub returning
+  exit 2 and `Hidden: true` on the cobra command). Adding a verb is
+  one new file + one `cmd.AddCommand` line in `root.go`. `wp.go` is
+  the lone exception that holds logic (the runWP + parseWPFlags
+  helpers) rather than just wiring — extracting to its own package
+  would force exposing `exitCodeError`, and the surface is small
+  enough to live next to the cobra definition.
 - `internal/version/` — `Version` + `Commit` baked in via goreleaser
   `-ldflags`. `String()` falls back to `runtime/debug.ReadBuildInfo()`
   for local `go build` so `fp version` is always meaningful.
@@ -65,9 +70,12 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   (`CurrentBranch` / `BranchExists` / `Checkout` / `Add` / `Commit` /
   `Push`) + real impl + `Fake`. Used by `internal/release/`.
 - `internal/gh/` — testability seam for GitHub CLI. `Runner` interface
-  (`PRCreate` / `PRView` / `AuthStatus`) + real impl + `Fake`. Used
-  by `internal/release/` and `internal/doctor/`. `gh` auth + context
-  discovery is the user's problem, not ours — same shape as `docker`.
+  (`PRCreate(..., draft bool)` / `PRView` / `AuthStatus`) + real impl
+  + `Fake`. Used by `internal/release/` and `internal/doctor/`. `gh`
+  auth + context discovery is the user's problem, not ours — same
+  shape as `docker`. The `draft` bool on `PRCreate` toggles
+  `gh pr create --draft` and is recorded on `Fake.Call.Draft` for
+  tests.
 - `internal/compose/` — project + service detection. `DefaultProject`
   mirrors compose v2's basename-of-cwd default; `Check` maps
   PS output to a status enum that drives the Error-UX (a) hierarchy.
@@ -165,11 +173,18 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   It skips only the "commit and push?" confirmation prompt. The
   underlying capture still runs with full safety (uncommitted-changes
   guard, etc.) — release doesn't expose a `--quick` passthrough.
+- **`--draft` on `fp release` opens a draft PR.** Threads through
+  to `gh pr create --draft`. Marked mutually exclusive with `--no-pr`
+  via `cmd.MarkFlagsMutuallyExclusive` so cobra rejects the
+  combination at flag-parse time, not at runtime.
 - **Verbatim wp-cli stderr.** The mu-plugin's error messages are
   written deliberately (especially "no snapshot adapter detected").
-  `internal/snapshot` and `internal/apply` both stream stdout/stderr
-  through unmodified; failures print a brief framing line + a hint,
-  never reformat the underlying message.
+  `internal/snapshot`, `internal/apply`, and `fp wp` (via `runWP` in
+  `internal/cli/wp.go`) all stream stdout/stderr through unmodified;
+  failures print a brief framing line + a hint, never reformat the
+  underlying message. `fp wp` additionally forwards wp-cli's exit
+  code via `exitCodeError` so scripted callers can treat fp wp like
+  a thin alias.
 - **Snapshot slugs default to UTC timestamps.** `fp snapshot` with
   no `--slug` produces `YYYY-MM-DDTHH-MM-SSZ` — filename-safe (the
   ISO 8601 `:` becomes `-`) and lex-sortable, so `ls web/imports/`

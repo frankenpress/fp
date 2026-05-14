@@ -202,6 +202,49 @@ func TestRun_ExplicitBranchOverridesPolicy(t *testing.T) {
 	}
 }
 
+func TestRun_Draft_PassesDraftToGH(t *testing.T) {
+	s := newStack(t, "sts-launch", "feat/footer")
+
+	var stdout bytes.Buffer
+	opts := s.opts("sts-launch", "")
+	opts.Draft = true
+	opts.Stdout = &stdout
+
+	if err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	foundDraft := false
+	for _, c := range s.gh.Calls {
+		if c.Method == "PRCreate" {
+			if !c.Draft {
+				t.Errorf("expected PRCreate with Draft=true, got Draft=false")
+			}
+			foundDraft = true
+		}
+	}
+	if !foundDraft {
+		t.Errorf("did not see a PRCreate call: %+v", s.gh.Calls)
+	}
+	if !strings.Contains(stdout.String(), "opened draft PR") {
+		t.Errorf("stdout missing draft PR confirmation:\n%s", stdout.String())
+	}
+}
+
+func TestRun_NoDraft_DefaultsToNonDraft(t *testing.T) {
+	s := newStack(t, "sts-launch", "feat/footer")
+
+	if err := Run(context.Background(), s.opts("sts-launch", "")); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, c := range s.gh.Calls {
+		if c.Method == "PRCreate" && c.Draft {
+			t.Errorf("expected non-draft PRCreate, got Draft=true")
+		}
+	}
+}
+
 func TestRun_NoPR_SkipsGHCreate(t *testing.T) {
 	s := newStack(t, "sts-launch", "feat/footer")
 
