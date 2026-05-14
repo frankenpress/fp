@@ -194,14 +194,15 @@ instead of erroring.
 `--yes` skips only the "commit and push?" confirmation prompt; it is **not** a
 safety bypass.
 
-### `fp version` / `fp validate`
+### `fp version`
 
 ```bash
 fp version              # version + commit SHA (baked at build time via -ldflags)
-fp validate <dir>       # stub — strict schema validation is future scope
 ```
 
-Only `fp validate` is still a stub.
+`fp validate <dir>` (strict manifest schema validation) is planned but not yet
+implemented — the command is currently hidden from `--help` and will surface
+when the validator ships.
 
 ## Configuration
 

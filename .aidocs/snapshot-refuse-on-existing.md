@@ -1,8 +1,10 @@
 # `fp snapshot` — refuse capture when a prior snapshot dir exists
 
-**Status:** proposed
+**Status:** shelved (2026-05-14) — superseded by the timestamp-snapshot-slugs work (charts ≥ v0.12.0 picks the snapshot with the highest `manifest.created`, so `web/imports/` now accumulates dirs by design rather than enforcing one-snapshot-per-release). The triggering 2026-05-13 sts-stg failure is no longer reproducible with the accumulation model.
 **Created:** 2026-05-13
 **Owner:** unassigned
+
+Kept for searchable rationale. The "rejected alternative" + "open questions" sections below are no longer load-bearing; treat this as a historical artefact, not a plan.
 
 ## Context
 

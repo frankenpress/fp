@@ -25,10 +25,10 @@ Current shipped surface (v0.5.0+, 2026-05-14):
   - `fp apply [slug-or-path]` — stage + `wp fp apply` for round-trip iteration (no arg → latest)
   - `fp diff <a> <b>` — structural delta between two committed snapshots
   - `fp release` — one-shot capture + commit + push + open PR
-  - `fp validate <dir>` — still a stub (Phase 12+ — strict schema validation)
+  - `fp validate <dir>` — still a stub; **hidden from `--help`** as of 2026-05-14 pending real implementation (Phase 12+ — strict schema validation)
   - `fp version` — version + commit
 
-Detailed design / decisions: [`frankenpress/.aidocs/fp-go-cli.md`](../.aidocs/fp-go-cli.md) (Phase 1-11 shipped; slug-cascade decisions superseded by [`timestamp-snapshot-slugs.md`](../.aidocs/timestamp-snapshot-slugs.md)). `fp init` design + scope: [`frankenpress/.aidocs/fp-init.md`](../.aidocs/fp-init.md).
+Historical design notes (Phase 1-11 + `fp init` + timestamp-snapshot-slugs) lived in workspace `.aidocs/` during the v0.1 → v0.6 build-out. They were deleted when the work shipped; the summary is in [`../.aidocs/README.md`](../.aidocs/README.md)'s "Recently completed" section, and the detail is recoverable from the linked PRs + commit history (see also the `fp` repo's own git log).
 Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-facing flow.
 
 ## File layout
@@ -226,8 +226,6 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   needs `wp fp dump --scope` (or similar) that doesn't exist yet.
   Parsing the running WP DB from the host is on the wrong side of
   the seam.
-- **Don't mutate `.aidocs/fp-go-cli.md`** without explicit user
-  approval. The "Resolved:" decisions there are the contract.
 
 ## Local testing
 
@@ -275,21 +273,19 @@ real docker / git / gh is **not** required for `go test ./...`.
 
 Keep these in sync:
 
-1. The plan at [`frankenpress/.aidocs/fp-go-cli.md`](../.aidocs/fp-go-cli.md)
-   — especially the "Resolved" decisions and the Error-UX table.
-2. `README.md` flag table + config-shape example + subcommand surface.
-3. The root help text in `internal/cli/root.go` (`rootLong`) — it
+1. `README.md` flag table + config-shape example + subcommand surface.
+2. The root help text in `internal/cli/root.go` (`rootLong`) — it
    lists every subcommand inline.
-4. `knownMaxSchemaMinor` in `internal/summary/summary.go` — bump
+3. `knownMaxSchemaMinor` in `internal/summary/summary.go` — bump
    when fp learns about a new manifest field added in mu-plugin.
-5. If `snapshot.Run`'s signature or `*Result` shape changes:
+4. If `snapshot.Run`'s signature or `*Result` shape changes:
    `internal/release/release.go` reads `Slug` / `Note` / `ManifestPath`
    from Result, so a field rename/removal cascades there. Search for
    `snapResult.` in the release package before mutating.
-6. If `frankenpress.toml`'s `[snapshot]` shape changes: update
+5. If `frankenpress.toml`'s `[snapshot]` shape changes: update
    `internal/config/config.go`'s `SnapshotConfig` AND the example
    block in [`frankenpress/site-template`'s README](https://github.com/frankenpress/site-template/blob/main/README.md).
-7. The public docs at [`docs/designer-flow.mdx`](https://github.com/frankenpress/docs/blob/main/designer-flow.mdx)
+6. The public docs at [`docs/designer-flow.mdx`](https://github.com/frankenpress/docs/blob/main/designer-flow.mdx)
    if a user-visible flow changes (new subcommand, prompt UX, etc.).
 
 ## Companion repos
