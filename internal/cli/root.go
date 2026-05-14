@@ -92,7 +92,6 @@ layer over the wp fp WP-CLI subcommands provided by frankenpress/mu-plugin.
   fp apply [dir-or-slug]   apply a snapshot back into the local stack
   fp diff <a> <b>          structural delta between two committed snapshots
   fp release               one-shot capture + commit + push + open PR
-  fp validate <dir>        validate a snapshot's manifest schema (future)
   fp version               print the binary version
 
 fp init brings the stack up itself. snapshot / apply / diff / release
