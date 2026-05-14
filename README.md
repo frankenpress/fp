@@ -5,8 +5,9 @@ designer-promotion lifecycle from the host side.
 
 Designers iterate on a local WordPress in docker-compose, then use `fp` to
 **capture** that state (`fp snapshot`), **apply** captures back for round-trip
-iteration (`fp apply`), **diff** two captures during review (`fp diff`), and
-**release** the result in one shot — commit, push, open PR (`fp release`).
+iteration (`fp apply`), **list** local captures (`fp list`), **diff** two
+captures during review (`fp diff`), and **release** the result in one shot —
+commit, push, open PR (`fp release`).
 
 Every bit of business logic (what to capture, schema versioning, apply
 semantics) lives in [`frankenpress/mu-plugin`](https://github.com/frankenpress/mu-plugin)'s
@@ -146,6 +147,28 @@ rebuilding the image.
 
 The path must resolve to a directory inside the site repo; the container only
 sees `/app/<rel-to-repo>`.
+
+### `fp list` — list local snapshots with manifest metadata
+
+```bash
+fp list                         # human table, newest first
+fp ls                           # same; built-in alias
+fp list --limit 5               # cap to the most recent 5
+fp list --json | jq '.[].slug'  # script-friendly
+```
+
+Pure host-side. Walks `[snapshot].output_dir` (default `web/imports/`),
+parses each `manifest.yaml`, and prints one row per snapshot — slug,
+created timestamp, content counts (templates / options / attachments),
+and the first line of the designer note. Sort order is `manifest.created`
+descending; snapshots whose manifest is missing a `created` field are
+still listed (with `—` in the column) so broken captures don't disappear
+silently.
+
+| Flag | What it does |
+|---|---|
+| `--limit N` | Cap the output to the most recent N snapshots. `0` (default) = no cap. |
+| `--json` | Emit a JSON array instead of the human table. Every field is keyed, including `host_dir` and a `counts` sub-object. Empty dir → `[]`. |
 
 ### `fp diff <a> <b>` — structural delta between two snapshots
 

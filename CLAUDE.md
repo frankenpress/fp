@@ -23,6 +23,7 @@ Current shipped surface (v0.5.0+, 2026-05-14):
   - `fp init` — one-command designer onboarding (bootstrap + up + WP install + apply latest)
   - `fp snapshot` — capture local site state into `web/imports/<timestamp>/`
   - `fp apply [slug-or-path]` — stage + `wp fp apply` for round-trip iteration (no arg → latest)
+  - `fp list` (alias `ls`) — host-side table of local snapshots (slug / created / counts / note), `--json` + `--limit`
   - `fp diff <a> <b>` — structural delta between two committed snapshots
   - `fp release` — one-shot capture + commit + push + open PR
   - `fp validate <dir>` — still a stub; **hidden from `--help`** as of 2026-05-14 pending real implementation (Phase 12+ — strict schema validation)
@@ -35,10 +36,10 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
 
 - `cmd/fp/main.go` — thin entrypoint, calls `cli.NewRoot().Run(os.Args[1:])`.
 - `internal/cli/` — cobra wiring. One file per subcommand
-  (`root.go`, `version.go`, `snapshot.go`, `apply.go`, `diff.go`,
-  `release.go`, plus `validate.go` which is still a stub returning
-  exit 2). Adding a verb is one new file + one `cmd.AddCommand` line
-  in `root.go`.
+  (`root.go`, `version.go`, `snapshot.go`, `apply.go`, `list.go`,
+  `diff.go`, `release.go`, plus `validate.go` which is still a stub
+  returning exit 2 and `Hidden: true` on the cobra command). Adding
+  a verb is one new file + one `cmd.AddCommand` line in `root.go`.
 - `internal/version/` — `Version` + `Commit` baked in via goreleaser
   `-ldflags`. `String()` falls back to `runtime/debug.ReadBuildInfo()`
   for local `go build` so `fp version` is always meaningful.
@@ -91,6 +92,10 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   `options.json` + `attachments.json` + `uploads-manifest.txt` and
   produces a structural `*Result`. `render.go` formats the Result as
   human-readable terminal output. Zero docker / git / gh coupling.
+- `internal/list/` — pure host-side snapshot lister. `Run(opts)`
+  calls `summary.Walk`, applies `--limit`, renders either a
+  tabwriter-padded text table or a JSON array. Zero docker / git /
+  gh coupling. The cobra alias `ls` is wired in `internal/cli/list.go`.
 - `internal/release/` — composes `snapshot.Run` + `git.Runner` +
   `gh.Runner` + `prompt.Confirm` into the one-shot designer flow.
   Owns the branch policy (auto-create `feat/snapshot-<slug>` off
@@ -101,6 +106,10 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   future `fp validate` subcommand). Prints a one-line warning when
   the schema is newer than `knownMaxSchemaMinor`. Reused by `apply`
   (for the pre-flight + post-summary) and `release` (for the PR body).
+  `Walk(repoRoot, outputDir)` is the shared "list every snapshot dir
+  with a parseable manifest, sorted by `created` desc" helper —
+  `apply.PickLatest`, `internal/list/`, and (next) `internal/prune/`
+  all sit on top of it so they can't drift on ordering or tolerance.
 - `internal/setup/` — `fp init` orchestrator. `Run(ctx, Options)`
   composes `.env` scaffolding + `docker.Runner.ComposerInstall` +
   `docker.Runner.ComposeUp` + `wp core install` + `apply.Run` into
