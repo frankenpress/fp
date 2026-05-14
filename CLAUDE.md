@@ -25,6 +25,8 @@ Current shipped surface (v0.5.0+, 2026-05-14):
   - `fp apply [slug-or-path]` — stage + `wp fp apply` for round-trip iteration (no arg → latest)
   - `fp list` (alias `ls`) — host-side table of local snapshots (slug / created / counts / note), `--json` + `--limit`
   - `fp diff <a> <b>` — structural delta between two committed snapshots
+  - `fp delete <slug-or-path>` (alias `rm`) — remove a single snapshot; refuses dirs without `manifest.yaml` and refuses uncommitted git state unless `--quick`
+  - `fp prune --keep N` — keep newest N by `manifest.created`, remove the rest; **dry-run by default**, pass `--apply` to act, `--quick` overrides the dirty guard
   - `fp release` — one-shot capture + commit + push + open PR
   - `fp validate <dir>` — still a stub; **hidden from `--help`** as of 2026-05-14 pending real implementation (Phase 12+ — strict schema validation)
   - `fp version` — version + commit
@@ -37,9 +39,10 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
 - `cmd/fp/main.go` — thin entrypoint, calls `cli.NewRoot().Run(os.Args[1:])`.
 - `internal/cli/` — cobra wiring. One file per subcommand
   (`root.go`, `version.go`, `snapshot.go`, `apply.go`, `list.go`,
-  `diff.go`, `release.go`, plus `validate.go` which is still a stub
-  returning exit 2 and `Hidden: true` on the cobra command). Adding
-  a verb is one new file + one `cmd.AddCommand` line in `root.go`.
+  `diff.go`, `delete.go`, `prune.go`, `release.go`, plus
+  `validate.go` which is still a stub returning exit 2 and
+  `Hidden: true` on the cobra command). Adding a verb is one new
+  file + one `cmd.AddCommand` line in `root.go`.
 - `internal/version/` — `Version` + `Commit` baked in via goreleaser
   `-ldflags`. `String()` falls back to `runtime/debug.ReadBuildInfo()`
   for local `go build` so `fp version` is always meaningful.
@@ -96,6 +99,15 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   calls `summary.Walk`, applies `--limit`, renders either a
   tabwriter-padded text table or a JSON array. Zero docker / git /
   gh coupling. The cobra alias `ls` is wired in `internal/cli/list.go`.
+- `internal/prune/` — pure host-side snapshot removal. `Delete(opts)`
+  takes a single target (slug / relpath / abspath; mirrors apply's
+  resolver) and `Prune(opts)` keeps the newest `Keep` entries by
+  `Manifest.Created`. Both funnel through a private `remove()` that
+  enforces the manifest-presence safety check, runs the
+  uncommitted-changes guard via `repo.HasUncommittedChanges` unless
+  `Quick` is set, and prints one line per removed entry. Prune is
+  dry-run by default (`Apply` must be true to delete). Cobra aliases:
+  `rm` for delete. Zero docker coupling.
 - `internal/release/` — composes `snapshot.Run` + `git.Runner` +
   `gh.Runner` + `prompt.Confirm` into the one-shot designer flow.
   Owns the branch policy (auto-create `feat/snapshot-<slug>` off
@@ -108,8 +120,8 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   (for the pre-flight + post-summary) and `release` (for the PR body).
   `Walk(repoRoot, outputDir)` is the shared "list every snapshot dir
   with a parseable manifest, sorted by `created` desc" helper —
-  `apply.PickLatest`, `internal/list/`, and (next) `internal/prune/`
-  all sit on top of it so they can't drift on ordering or tolerance.
+  `apply.PickLatest`, `internal/list/`, and `internal/prune/` all sit
+  on top of it so they can't drift on ordering or tolerance.
 - `internal/setup/` — `fp init` orchestrator. `Run(ctx, Options)`
   composes `.env` scaffolding + `docker.Runner.ComposerInstall` +
   `docker.Runner.ComposeUp` + `wp core install` + `apply.Run` into
@@ -133,10 +145,12 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   `git` / `gh` all inherit whatever local credentials, contexts, and
   config the user already has. fp does not link any SDK and does not
   reimplement auth.
-- **`--quick` is the only safety-bypass on `fp snapshot`.** No `--force`.
-  Designers who want to skip only the uncommitted-changes guard
-  `rm -rf` the target dir first. Two flags for "be careful less" is
-  a smell.
+- **`--quick` is the only safety-bypass flag, and it's shape-shared
+  across `snapshot`, `delete`, and `prune`.** All three honour the
+  same uncommitted-changes guard via `repo.HasUncommittedChanges`;
+  all three accept `--quick` to bypass it. No `--force`. No
+  per-command alternates. Two flags for "be careful less" is a smell;
+  one is the rule.
 - **`--yes` on `fp release` is a UX accelerator, not a safety bypass.**
   It skips only the "commit and push?" confirmation prompt. The
   underlying capture still runs with full safety (uncommitted-changes
@@ -213,9 +227,12 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   fp reads JSON/YAML the mu-plugin already emitted. If you're parsing
   PHP-serialised blobs in Go, you're on the wrong side of the seam.
 - **Don't add a `--force` flag anywhere.** No fp subcommand has a
-  force-bypass. `fp snapshot --quick` is the single safety bypass and
-  it's behaviour-changing (timestamped slug, skip state write), not
-  a guard-overrider. `fp release --yes` skips one specific confirmation
+  force-bypass. `--quick` (on `snapshot`, `delete`, `prune`) is the
+  single shape-shared safety bypass and it specifically waives the
+  uncommitted-changes guard — nothing else. On `snapshot` it also
+  carries behaviour changes (timestamped slug, skip state write) for
+  the ad-hoc-capture path; on `delete` / `prune` it's just the
+  guard-waiver. `fp release --yes` skips one specific confirmation
   prompt and does **not** bypass any safety guard.
 - **Don't reformat wp-cli stderr.** Stream it through, both in
   `internal/snapshot` and `internal/apply`. The mu-plugin error text
