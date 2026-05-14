@@ -31,8 +31,60 @@ go install github.com/frankenpress/fp/cmd/fp@latest
 ## Usage
 
 Run any subcommand from your site repo's root or any subdirectory — `fp` walks
-up to find `frankenpress.toml` or `composer.json` to identify the repo. The
-docker-compose stack must already be up (`fp` doesn't bring it up).
+up to find `frankenpress.toml` or `composer.json` to identify the repo.
+
+`fp init` brings the stack up itself; every other subcommand expects
+docker-compose to already be running.
+
+### `fp init` — one-command onboarding
+
+```bash
+fp init
+```
+
+Designed for two scenarios:
+
+- **First-time onboarding**: clone the site repo, run `fp init`, be ready to
+  design within a couple of minutes. No `make setup`, no `wp core install`,
+  no `fp apply`.
+- **Recovery after `docker compose down -v`**: same command — `fp init`
+  brings volumes back from empty to the state captured by the latest
+  snapshot, MinIO assets and all.
+
+What it does, in order:
+
+1. Scaffold `.env` from `.env.example` (if `.env` is missing)
+2. Run `composer install` via docker (no PHP needed on the host) — if `vendor/` is absent
+3. Write `FP_S3_DISABLED=0` to `.env` so designer uploads land in MinIO — unless you've already set `FP_S3_DISABLED` explicitly (operator choice always wins)
+4. `docker compose up -d --wait` — gates on healthchecks
+5. `wp core install` with defaults `admin / admin / admin@example.test` (override via `[init]` in `frankenpress.toml`) — only if WP isn't installed yet
+6. Apply the latest snapshot (highest `manifest.created`) — same pick-latest logic the chart's install Job uses on cluster deploy
+
+| Flag | What it does |
+|---|---|
+| `--slug <s>` | Override the most-recent-snapshot pick with this slug. |
+| `--skip-setup` | Skip composer install + `.env` scaffolding. Use for CI / scripted setups where the env is already prepared. |
+| `--no-apply` | Bring the stack up + install WP, but don't apply any snapshot. |
+| `--reinstall-wp` | Drop existing WP install and re-run `wp core install`. Default off. |
+| `--service <s>` | Override `[snapshot].service`. |
+| `--project <s>` | Override `[snapshot].project`. |
+
+Configuration via `[init]` in `frankenpress.toml` (all optional):
+
+```toml
+[init]
+site_title     = "FrankenPress site"
+admin_user     = "admin"
+admin_password = "admin"
+admin_email    = "admin@example.test"
+disable_s3     = false    # true to keep FP_S3_DISABLED=1 locally
+```
+
+**Tradeoff**: designer-mode S3 (MinIO) means wp-admin's "Install plugin / theme
+from zip" buttons don't work (the `s3://` stream wrapper doesn't support every
+`ZipArchive` op). Designers rarely need that path; if you do, set
+`FP_S3_DISABLED=1` in `.env` and re-run `fp init`, or use
+`composer require wpackagist-plugin/<slug>` (the FrankenPress canonical install path).
 
 ### `fp snapshot` — capture local site state
 

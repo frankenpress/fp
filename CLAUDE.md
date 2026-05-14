@@ -18,16 +18,17 @@ Composer/binary name is `fp` (locked in before homebrew tap publish;
 renaming later breaks installs). Single binary — no aliases, no other
 entry points.
 
-Current shipped surface (v0.4.0, 2026-05-13):
+Current shipped surface (v0.5.0+, 2026-05-14):
 
-  - `fp snapshot` — capture local site state into `web/imports/<slug>/`
-  - `fp apply <slug-or-path>` — stage + `wp fp apply` for round-trip iteration
+  - `fp init` — one-command designer onboarding (bootstrap + up + WP install + apply latest)
+  - `fp snapshot` — capture local site state into `web/imports/<timestamp>/`
+  - `fp apply [slug-or-path]` — stage + `wp fp apply` for round-trip iteration (no arg → latest)
   - `fp diff <a> <b>` — structural delta between two committed snapshots
   - `fp release` — one-shot capture + commit + push + open PR
   - `fp validate <dir>` — still a stub (Phase 12+ — strict schema validation)
   - `fp version` — version + commit
 
-Detailed design / decisions: [`frankenpress/.aidocs/fp-go-cli.md`](../.aidocs/fp-go-cli.md) (all 11 phases shipped).
+Detailed design / decisions: [`frankenpress/.aidocs/fp-go-cli.md`](../.aidocs/fp-go-cli.md) (Phase 1-11 shipped; slug-cascade decisions superseded by [`timestamp-snapshot-slugs.md`](../.aidocs/timestamp-snapshot-slugs.md)). `fp init` design + scope: [`frankenpress/.aidocs/fp-init.md`](../.aidocs/fp-init.md).
 Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-facing flow.
 
 ## File layout
@@ -98,6 +99,14 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   future `fp validate` subcommand). Prints a one-line warning when
   the schema is newer than `knownMaxSchemaMinor`. Reused by `apply`
   (for the pre-flight + post-summary) and `release` (for the PR body).
+- `internal/setup/` — `fp init` orchestrator. `Run(ctx, Options)`
+  composes `.env` scaffolding + `docker.Runner.ComposerInstall` +
+  `docker.Runner.ComposeUp` + `wp core install` + `apply.Run` into
+  one ergonomic onboarding flow. Pure file-IO helpers
+  (`ScaffoldEnvFromExample`, `EnsureEnvKey`, `ReadEnvKey`) live next
+  to it for unit testability. `--skip-setup` skips ALL env-mutating
+  steps (env scaffold + composer + FP_S3_DISABLED line); `--no-apply`
+  skips just the apply tail.
 
 ## Conventions
 
@@ -151,8 +160,20 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   highest `created`. Same logic as the charts install Job at deploy
   time, so local apply targets the same snapshot the cluster will.
   Helper lives in `internal/apply/picklatest.go` as `PickLatest()`
-  — exported so future `fp init` can reuse it without re-deriving.
+  — exported and reused by `fp init` so the two callers don't drift.
   Passing a positional slug-or-path keeps the existing behaviour.
+- **`fp init` is the canonical onboarding command.** Brings a fresh
+  clone (or a post-`down -v` stack) to "ready to design" in one
+  command. The pipeline is deliberately defensive — every step is
+  independently idempotent (`.env` scaffold no-ops if `.env` exists,
+  composer install no-ops if `vendor/` exists, `EnsureEnvKey` no-ops
+  if `FP_S3_DISABLED` is already set, `wp core install` no-ops if WP
+  is installed, apply hits the mu-plugin's idempotency markers).
+  Re-running `fp init` is safe and cheap. Designer-mode S3
+  (`FP_S3_DISABLED=0`) is layered in via `EnsureEnvKey` — the
+  helper NEVER overwrites an existing uncommented assignment, so an
+  operator's explicit `FP_S3_DISABLED=1` wins. `[init] disable_s3 =
+  true` in `frankenpress.toml` is the alternate opt-out path.
 - **Schema tolerance.** Summary printer accepts `fp.snapshot/v*` and
   unknown fields. Warning fires when `v<N>` exceeds the build's
   `knownMaxSchemaMinor` — bump that constant when fp adds new fields
