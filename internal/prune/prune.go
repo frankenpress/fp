@@ -31,6 +31,11 @@ type DeleteOptions struct {
 
 	RepoRoot  string
 	OutputDir string
+	// PullDir is an optional second dir to resolve bare-slug targets
+	// against (typically ".fp/prod-snapshots/"). When the slug exists
+	// in both OutputDir and PullDir, Delete refuses with a clear
+	// error — the separation is load-bearing.
+	PullDir string
 
 	// Quick bypasses the uncommitted-changes guard. Mirrors fp
 	// snapshot --quick semantics — the project's single safety bypass.
@@ -87,7 +92,7 @@ func Delete(opts DeleteOptions) error {
 		outputDir = "web/imports"
 	}
 
-	hostDir, relToRoot, err := resolveTarget(opts.RepoRoot, outputDir, opts.Target)
+	hostDir, relToRoot, err := resolveTarget(opts.RepoRoot, outputDir, opts.PullDir, opts.Target)
 	if err != nil {
 		return err
 	}
@@ -210,10 +215,12 @@ func remove(repoRoot string, cands []candidate, quick, dry bool, w io.Writer) er
 }
 
 // resolveTarget mirrors apply.resolveSnapshotDir: bare slug → joined
-// against outputDir; path with separators → relative to cwd; absolute
-// → as given. Refuses targets outside the repo root since blindly
-// rm-ing /tmp/foo is not in scope.
-func resolveTarget(repoRoot, outputDir, target string) (hostDir, relToRoot string, err error) {
+// against outputDir (then pullDir as a fallback); path with separators
+// → relative to cwd; absolute → as given. Refuses targets outside the
+// repo root since blindly rm-ing /tmp/foo is not in scope. Errors on
+// slug collision across OutputDir + PullDir — the separation between
+// committed designer captures and pulled prod captures is load-bearing.
+func resolveTarget(repoRoot, outputDir, pullDir, target string) (hostDir, relToRoot string, err error) {
 	var abs string
 	switch {
 	case filepath.IsAbs(target):
@@ -225,7 +232,33 @@ func resolveTarget(repoRoot, outputDir, target string) (hostDir, relToRoot strin
 		}
 		abs = filepath.Clean(filepath.Join(cwd, target))
 	default:
-		abs = filepath.Join(repoRoot, outputDir, target)
+		committed := filepath.Join(repoRoot, outputDir, target)
+		committedExists := isDir(committed)
+		var pulled string
+		var pulledExists bool
+		if pullDir != "" {
+			pulled = filepath.Join(repoRoot, pullDir, target)
+			pulledExists = isDir(pulled)
+		}
+		switch {
+		case committedExists && pulledExists:
+			return "", "", fmt.Errorf(
+				"snapshot slug %q exists in both %s and %s. pass an explicit path to disambiguate",
+				target, committed, pulled,
+			)
+		case committedExists:
+			abs = committed
+		case pulledExists:
+			abs = pulled
+		default:
+			if pulled != "" {
+				return "", "", fmt.Errorf(
+					"snapshot dir not found: tried %s and %s",
+					committed, pulled,
+				)
+			}
+			abs = committed // legacy callers without PullDir hit the old "not found" path below
+		}
 	}
 
 	info, err := os.Stat(abs)
@@ -270,4 +303,14 @@ func formatLine(c candidate) string {
 		return c.RelToRoot
 	}
 	return fmt.Sprintf("%s (created %s)", c.RelToRoot, c.Created)
+}
+
+// isDir is a tiny helper for the two-dir collision check in
+// resolveTarget. Returns false on any stat error.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }

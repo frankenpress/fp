@@ -5,6 +5,7 @@ import (
 
 	"github.com/frankenpress/fp/internal/config"
 	"github.com/frankenpress/fp/internal/prune"
+	"github.com/frankenpress/fp/internal/pull"
 	"github.com/spf13/cobra"
 )
 
@@ -45,6 +46,7 @@ Refuses by default when the target has uncommitted git changes. Pass
 				Target:    args[0],
 				RepoRoot:  cfg.RepoRoot,
 				OutputDir: cfg.Snapshot.OutputDir,
+				PullDir:   pull.PulledDir,
 				Quick:     quick,
 				Stdout:    cmd.OutOrStdout(),
 				Stderr:    cmd.ErrOrStderr(),
