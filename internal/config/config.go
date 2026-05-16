@@ -54,6 +54,7 @@ type Config struct {
 
 	Snapshot SnapshotConfig
 	Init     InitConfig
+	Pull     PullConfig
 }
 
 // SnapshotConfig mirrors the [snapshot] TOML section. Every key is
@@ -106,6 +107,26 @@ type InitConfig struct {
 	DisableS3 bool `toml:"disable_s3"`
 }
 
+// PullConfig mirrors the [pull] TOML section. Required only when
+// `fp pull` is invoked; sites that don't pull prod content leave it
+// unset.
+type PullConfig struct {
+	// Bucket is the snapshot bucket name (e.g.
+	// "sts-production-snapshots-eu-west-2-533158516642"). Required
+	// when `fp pull` runs. fp does NOT synthesise it from
+	// site/env/region — keep the CLI decoupled from the
+	// tg_frankenpress naming convention.
+	Bucket string `toml:"bucket"`
+	// Profile is passed as `aws --profile <name>` on every shell-out.
+	// Optional — leave empty to let aws's own resolution win (env vars
+	// inside aws-vault exec, AWS_PROFILE, ~/.aws/credentials).
+	Profile string `toml:"profile"`
+	// Region is passed as `aws --region <name>`. Optional — leave
+	// empty for aws's standard resolution. Set when the bucket lives
+	// in a region that doesn't match the designer's default.
+	Region string `toml:"region"`
+}
+
 // Defaults returns a SnapshotConfig with every default filled in,
 // useful for tests and as the baseline merged onto an empty file.
 func Defaults() SnapshotConfig {
@@ -134,6 +155,7 @@ func DefaultsInit() InitConfig {
 type rawConfig struct {
 	Snapshot SnapshotConfig `toml:"snapshot"`
 	Init     InitConfig     `toml:"init"`
+	Pull     PullConfig     `toml:"pull"`
 }
 
 // Load walks up from startDir (or cwd when empty), parses
@@ -177,7 +199,20 @@ func Load(startDir string) (*Config, error) {
 
 	mergeSnapshot(&cfg.Snapshot, raw.Snapshot)
 	mergeInit(&cfg.Init, raw.Init)
+	mergePull(&cfg.Pull, raw.Pull)
 	return cfg, nil
+}
+
+func mergePull(dst *PullConfig, src PullConfig) {
+	if src.Bucket != "" {
+		dst.Bucket = src.Bucket
+	}
+	if src.Profile != "" {
+		dst.Profile = src.Profile
+	}
+	if src.Region != "" {
+		dst.Region = src.Region
+	}
 }
 
 func mergeInit(dst *InitConfig, src InitConfig) {

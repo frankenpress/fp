@@ -41,6 +41,7 @@ func NewRoot() *Root {
 		newDiffCmd(),
 		newDeleteCmd(),
 		newPruneCmd(),
+		newPullCmd(),
 		newDoctorCmd(),
 		newWPCmd(),
 		newValidateCmd(),
@@ -107,6 +108,7 @@ layer over the wp fp WP-CLI subcommands provided by frankenpress/mu-plugin.
   fp diff <a> <b>          structural delta between two committed snapshots
   fp delete <dir-or-slug>  remove a single local snapshot
   fp prune --keep N        keep the newest N snapshots, remove the rest
+  fp pull                  download a prod snapshot from S3 into .fp/prod-snapshots/
   fp doctor                read-only health check of the local stack
   fp wp <args...>          run wp-cli inside the running site container
   fp release               one-shot capture + commit + push + open PR

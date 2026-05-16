@@ -253,6 +253,51 @@ tree. If the snapshot was committed, `git status` will show the
 removal as a normal pending change; commit it as part of your usual
 flow.
 
+### `fp pull` — download a prod snapshot from the per-tenant S3 bucket
+
+```bash
+fp pull                                   # download the latest prod snapshot
+fp pull --list                            # list available, no download
+fp pull --slug prod-2026-05-15T00-00-00Z  # download a specific snapshot
+```
+
+Designers building theme work against real-volume content fetch a
+bundle from the per-tenant snapshot bucket into
+`.fp/prod-snapshots/<slug>/`. The cluster-side capture is handled by
+the mu-plugin's `SnapshotExporter` component (daily wp-cron at site-
+local midnight + an admin button under Tools → Snapshot Export);
+`fp pull` only downloads what's already up there.
+
+Configure once in `frankenpress.toml`:
+
+```toml
+[pull]
+bucket  = "sts-production-snapshots-eu-west-2-533158516642"
+profile = "mkennedy"      # optional — passed as aws --profile
+# region = "eu-west-2"    # optional — aws CLI resolves otherwise
+```
+
+AWS credentials come from your shell (`aws-vault exec`,
+`AWS_PROFILE`, `~/.aws/credentials`) — fp does not link the AWS SDK,
+same convention as docker/git/gh. The prod-account `Admin` role is
+the canonical access path; bucket reads inherit from there.
+
+Once pulled, apply like any other snapshot — `fp apply` looks in
+**both** `web/imports/` (committed designer captures) and
+`.fp/prod-snapshots/` (pulled prod captures) when picking the
+latest:
+
+```bash
+fp apply                                # latest across both dirs
+fp apply prod-2026-05-15T00-00-00Z      # explicit pulled-snapshot slug
+```
+
+The two dirs serve different roles. `web/imports/` is committed
+history — what the site is supposed to look like. `.fp/prod-snapshots/`
+is ephemeral — a working corpus for theme dev, re-pulled when stale,
+gitignored automatically. Slug collisions between dirs hard-error
+so the separation can't drift accidentally.
+
 ### `fp doctor` — read-only local-stack health check
 
 ```bash

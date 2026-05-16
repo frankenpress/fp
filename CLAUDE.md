@@ -28,6 +28,7 @@ Current shipped surface (v0.5.0+, 2026-05-14):
   - `fp diff <a> <b>` — structural delta between two committed snapshots
   - `fp delete <slug-or-path>` (alias `rm`) — remove a single snapshot; refuses dirs without `manifest.yaml` and refuses uncommitted git state unless `--quick`
   - `fp prune --keep N` — keep newest N by `manifest.created`, remove the rest; **dry-run by default**, pass `--apply` to act, `--quick` overrides the dirty guard
+  - `fp pull` — download a prod snapshot from the per-tenant S3 snapshot bucket into `.fp/prod-snapshots/<slug>/`. `--list` lists what's available without downloading; `--slug <name>` overrides the auto-pick-latest. Reads `[pull]` from `frankenpress.toml` (bucket name required; profile/region optional). AWS creds come from the user's shell — same shape as docker/git/gh
   - `fp doctor` — read-only health check of the local stack (fp / compose versions, service status, latest snapshot, FP_S3_DISABLED, git state, `gh auth`); always exits 0; prints hints for any "problem" check
   - `fp wp <args...>` — thin passthrough to wp-cli inside the running site container; prepends `--allow-root --path=/app/web/wp`; flag parsing disabled so wp's own flags route through untouched; `--service` / `--project` overrides honoured before the wp-cli args (or before a `--` terminator); wp-cli's exit code is forwarded
   - `fp release` — one-shot capture + commit + push + open PR (`--draft` opens the PR as draft via `gh pr create --draft`; mutually exclusive with `--no-pr`)
@@ -86,6 +87,11 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   shape as `docker`. The `draft` bool on `PRCreate` toggles
   `gh pr create --draft` and is recorded on `Fake.Call.Draft` for
   tests.
+- `internal/aws/` — testability seam for the aws CLI. `Runner`
+  interface (`ListSnapshotPrefixes` + `SyncDown`) + real impl +
+  `Fake`. Used by `internal/pull/`. fp does not link the AWS SDK —
+  credential resolution (aws-vault / `AWS_PROFILE` / `~/.aws/credentials`)
+  is the user's local aws CLI's job, same convention as docker/git/gh.
 - `internal/compose/` — project + service detection. `DefaultProject`
   mirrors compose v2's basename-of-cwd default; `Check` maps
   PS output to a status enum that drives the Error-UX (a) hierarchy.
@@ -150,6 +156,13 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   with a parseable manifest, sorted by `created` desc" helper —
   `apply.PickLatest`, `internal/list/`, and `internal/prune/` all sit
   on top of it so they can't drift on ordering or tolerance.
+- `internal/pull/` — `fp pull` orchestrator. `Run(ctx, Options)`
+  reads the `[pull]` config block, calls `aws.Runner` to list S3
+  prefixes and pick the latest (or honour `--slug`), syncs the
+  prefix into `.fp/prod-snapshots/<slug>/`. Drops a `.gitignore`
+  stub inside `.fp/prod-snapshots/` so pulled content can't be
+  accidentally committed. Refuses with a clear error when
+  `[pull].bucket` is unset.
 - `internal/setup/` — `fp init` orchestrator. `Run(ctx, Options)`
   composes `.env` scaffolding + `docker.Runner.ComposerInstall` +
   `docker.Runner.ComposeUp` + `wp core install` + `apply.Run` into
@@ -215,13 +228,25 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
   moment" rather than letting pre-clean wipe the prior capture.
   Only fires for the timestamp-default path; `--slug=<name>` keeps
   its iterate-on-the-named-slug overwrite behaviour.
-- **`fp apply` with no positional → pick latest.** Walks
-  `[snapshot].output_dir`, reads each `manifest.yaml`, picks the
-  highest `created`. Same logic as the charts install Job at deploy
-  time, so local apply targets the same snapshot the cluster will.
-  Helper lives in `internal/apply/picklatest.go` as `PickLatest()`
-  — exported and reused by `fp init` so the two callers don't drift.
-  Passing a positional slug-or-path keeps the existing behaviour.
+- **`fp apply` with no positional → pick latest across BOTH dirs.**
+  Walks `[snapshot].output_dir` AND `.fp/prod-snapshots/`, reads
+  each `manifest.yaml`, picks the highest `created`. Same logic as
+  the charts install Job at deploy time, so local apply targets the
+  same snapshot the cluster will. Slugs that exist in both dirs
+  hard-error — the separation (committed designer captures vs
+  ephemeral pulled prod captures) is load-bearing. Helpers in
+  `internal/apply/picklatest.go`: `PickLatest()` (single-dir, used
+  by `fp init`) and `PickLatestFromDirs()` (multi-dir, used by
+  `fp apply`). A bare-slug positional to `fp apply` resolves the
+  same way: committed dir first, then pulled, error if both.
+- **Pulled snapshots live in `.fp/prod-snapshots/`, never `web/imports/`.**
+  `fp pull` writes to `.fp/prod-snapshots/<slug>/` so committed
+  designer history (`web/imports/`) and ephemeral prod working
+  copies stay clearly separated. Pulled dirs are gitignored (the
+  pull orchestrator drops a `.gitignore` stub on first pull). The
+  cluster-side capture is the mu-plugin's `SnapshotExporter`
+  component — fp does NOT capture or upload, only downloads what
+  the cluster has already pushed.
 - **`fp init` is the canonical onboarding command.** Brings a fresh
   clone (or a post-`down -v` stack) to "ready to design" in one
   command. The pipeline is deliberately defensive — every step is
@@ -253,9 +278,9 @@ Public docs: **<https://docs.frankenpress.com/designer-flow>** for the user-faci
 
 ## Don'ts
 
-- **Don't link the Docker SDK / go-git / a github API client.** All
-  three external tools (`docker compose`, `git`, `gh`) are shelled
-  out via Runner interfaces. Linking SDKs means owning auth +
+- **Don't link the Docker SDK / go-git / a github API client / AWS SDK.**
+  All four external tools (`docker compose`, `git`, `gh`, `aws`) are
+  shelled out via Runner interfaces. Linking SDKs means owning auth +
   contexts + credential helpers, which is the user's local CLI's job.
 - **Don't reimplement WP option deserialisation in Go.** The
   mu-plugin runs inside WordPress with the real PHP deserialiser;

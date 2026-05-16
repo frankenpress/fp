@@ -57,21 +57,27 @@ func Run(ctx context.Context, opts Options) error {
 	project := firstNonEmpty(opts.Project, opts.Config.Snapshot.Project, compose.DefaultProject(opts.RepoRoot))
 	outputDir := firstNonEmpty(opts.Config.Snapshot.OutputDir, "web/imports")
 
-	// No positional → pick the latest snapshot by manifest.created.
-	// Same pick-latest semantics the charts install Job uses, so
-	// `fp apply` (locally) and the in-cluster apply target the same
-	// snapshot from the same source of truth (the `created` field).
+	// No positional → pick the latest snapshot by manifest.created
+	// across BOTH the committed output dir AND the pulled-from-prod
+	// dir (.fp/prod-snapshots/). Same pick-latest semantics the charts
+	// install Job uses, so `fp apply` (locally) and the in-cluster
+	// apply target the same snapshot when applied against the same
+	// source. Slug collisions across dirs hard-error.
+	pullDir := ".fp/prod-snapshots"
 	var hostSnapshotDir, relToRoot string
 	var err error
 	if opts.Target == "" {
-		slug, dir, perr := PickLatest(opts.RepoRoot, outputDir)
+		_, dir, perr := PickLatestFromDirs(opts.RepoRoot, []string{outputDir, pullDir})
 		if perr != nil {
 			return perr
 		}
 		hostSnapshotDir = dir
-		relToRoot = filepath.Join(outputDir, slug)
+		relToRoot, err = filepath.Rel(opts.RepoRoot, dir)
+		if err != nil {
+			return fmt.Errorf("compute relative path: %w", err)
+		}
 	} else {
-		hostSnapshotDir, relToRoot, err = resolveSnapshotDir(opts.RepoRoot, outputDir, opts.Target)
+		hostSnapshotDir, relToRoot, err = resolveSnapshotDir(opts.RepoRoot, outputDir, pullDir, opts.Target)
 		if err != nil {
 			return err
 		}
@@ -167,13 +173,15 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 // resolveSnapshotDir interprets target as either:
-//   - a bare slug → <repoRoot>/<outputDir>/<target>
+//   - a bare slug → <repoRoot>/<outputDir>/<target> first, then
+//     <repoRoot>/<pullDir>/<target> (committed captures preferred over
+//     pulled). Errors if the slug exists in both dirs.
 //   - a relative path with separators → <cwd>/<target>, normalised
 //   - an absolute path → as given
 //
 // Returns the absolute host path and the path relative to repoRoot
 // (used to compute the container-side /app/<rel> mirror).
-func resolveSnapshotDir(repoRoot, outputDir, target string) (hostDir, relToRoot string, err error) {
+func resolveSnapshotDir(repoRoot, outputDir, pullDir, target string) (hostDir, relToRoot string, err error) {
 	var abs string
 	switch {
 	case filepath.IsAbs(target):
@@ -185,8 +193,28 @@ func resolveSnapshotDir(repoRoot, outputDir, target string) (hostDir, relToRoot 
 		}
 		abs = filepath.Clean(filepath.Join(cwd, target))
 	default:
-		// Bare slug.
-		abs = filepath.Join(repoRoot, outputDir, target)
+		// Bare slug — try the committed dir first, then the pulled
+		// dir. Error if both exist.
+		committed := filepath.Join(repoRoot, outputDir, target)
+		pulled := filepath.Join(repoRoot, pullDir, target)
+		committedExists := isDir(committed)
+		pulledExists := isDir(pulled)
+		switch {
+		case committedExists && pulledExists:
+			return "", "", fmt.Errorf(
+				"snapshot slug %q exists in both %s and %s. remove one or pass an explicit path",
+				target, committed, pulled,
+			)
+		case committedExists:
+			abs = committed
+		case pulledExists:
+			abs = pulled
+		default:
+			return "", "", fmt.Errorf(
+				"snapshot dir not found: tried %s and %s",
+				committed, pulled,
+			)
+		}
 	}
 
 	info, err := os.Stat(abs)
@@ -206,6 +234,16 @@ func resolveSnapshotDir(repoRoot, outputDir, target string) (hostDir, relToRoot 
 	}
 
 	return abs, rel, nil
+}
+
+// isDir is a tiny helper for resolveSnapshotDir's two-dir collision
+// check. Returns false on any stat error.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
 
 // captureWriter tees output to the underlying writer and notes
