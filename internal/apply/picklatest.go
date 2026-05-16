@@ -1,8 +1,12 @@
 package apply
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/frankenpress/fp/internal/summary"
 )
@@ -42,5 +46,79 @@ func PickLatest(repoRoot, outputDir string) (slug, hostDir string, err error) {
 	return "", "", fmt.Errorf(
 		"no snapshot dir with a parseable manifest.yaml (and a `created` field) found under %s. capture one with `fp snapshot` first",
 		filepath.Join(repoRoot, outputDir),
+	)
+}
+
+// PickLatestFromDirs walks every (repoRoot, dir) pair and returns the
+// slug + host path of the snapshot with the highest manifest.created
+// across all dirs. Slugs that appear in more than one dir produce a
+// hard error — fp does not silently pick one over the other because
+// the design separation (committed `web/imports/` vs pulled
+// `.fp/prod-snapshots/`) is load-bearing for the round-trip flow.
+//
+// Used by `fp apply` to honour both `[snapshot].output_dir` (committed
+// captures) and `.fp/prod-snapshots/` (pulled prod captures) in the
+// no-positional case.
+//
+// Returns the standard PickLatest error when no dir contributes any
+// snapshot with a non-empty `created` field.
+func PickLatestFromDirs(repoRoot string, dirs []string) (slug, hostDir string, err error) {
+	// slug → host paths it was seen at (for collision diagnostics).
+	seen := map[string][]string{}
+	all := []summary.Entry{}
+	for _, dir := range dirs {
+		entries, werr := summary.Walk(repoRoot, dir)
+		if werr != nil {
+			// Missing dir is fine — pulled-snapshots dir won't exist
+			// until first `fp pull`. Propagate non-not-exist errors.
+			if errors.Is(werr, fs.ErrNotExist) {
+				continue
+			}
+			return "", "", werr
+		}
+		for _, e := range entries {
+			seen[e.Slug] = append(seen[e.Slug], e.HostDir)
+			all = append(all, e)
+		}
+	}
+
+	// Collision check — same slug in more than one dir.
+	for s, paths := range seen {
+		if len(paths) > 1 {
+			sort.Strings(paths)
+			return "", "", fmt.Errorf(
+				"snapshot slug %q exists in multiple dirs (%s). remove one or pass an explicit path to `fp apply`",
+				s,
+				strings.Join(paths, ", "),
+			)
+		}
+	}
+
+	// Sort across dirs by Created desc, empty Created last.
+	sort.SliceStable(all, func(i, j int) bool {
+		ci, cj := all[i].Manifest.Created, all[j].Manifest.Created
+		if ci == "" && cj != "" {
+			return false
+		}
+		if ci != "" && cj == "" {
+			return true
+		}
+		return ci > cj
+	})
+
+	for _, e := range all {
+		if e.Manifest.Created == "" {
+			continue
+		}
+		return e.Slug, e.HostDir, nil
+	}
+
+	checked := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		checked = append(checked, filepath.Join(repoRoot, d))
+	}
+	return "", "", fmt.Errorf(
+		"no snapshot dir with a parseable manifest.yaml (and a `created` field) found under %s. capture one with `fp snapshot` or pull one with `fp pull`",
+		strings.Join(checked, " or "),
 	)
 }

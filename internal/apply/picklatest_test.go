@@ -110,3 +110,70 @@ func TestPickLatest_TimestampNamedSlugs_LexSortAgrees(t *testing.T) {
 		t.Errorf("slug = %q, want 2026-05-14T09-18-00Z", slug)
 	}
 }
+
+func writeSnapDir(t *testing.T, root, relDir, slug, created string) {
+	t.Helper()
+	dir := filepath.Join(root, relDir, slug)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("schema: fp.snapshot/v5\nid: " + slug + "\ncreated: " + created + "\n")
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPickLatestFromDirs_PrefersHighestCreatedAcrossDirs(t *testing.T) {
+	root := t.TempDir()
+	writeSnapDir(t, root, "web/imports", "committed-old", "2026-05-14T00:00:00Z")
+	writeSnapDir(t, root, ".fp/prod-snapshots", "prod-2026-05-16T00-00-00Z", "2026-05-16T00:00:00Z")
+
+	slug, hostDir, err := PickLatestFromDirs(root, []string{"web/imports", ".fp/prod-snapshots"})
+	if err != nil {
+		t.Fatalf("PickLatestFromDirs: %v", err)
+	}
+	if slug != "prod-2026-05-16T00-00-00Z" {
+		t.Errorf("slug = %q, want prod-2026-05-16T00-00-00Z", slug)
+	}
+	if !strings.Contains(hostDir, filepath.Join(".fp", "prod-snapshots", "prod-2026-05-16T00-00-00Z")) {
+		t.Errorf("hostDir = %q, want path under .fp/prod-snapshots", hostDir)
+	}
+}
+
+func TestPickLatestFromDirs_MissingPullDirIsFine(t *testing.T) {
+	root := t.TempDir()
+	writeSnapDir(t, root, "web/imports", "designer-snap", "2026-05-14T00:00:00Z")
+
+	slug, _, err := PickLatestFromDirs(root, []string{"web/imports", ".fp/prod-snapshots"})
+	if err != nil {
+		t.Fatalf("PickLatestFromDirs: %v", err)
+	}
+	if slug != "designer-snap" {
+		t.Errorf("slug = %q, want designer-snap", slug)
+	}
+}
+
+func TestPickLatestFromDirs_SlugCollisionErrors(t *testing.T) {
+	root := t.TempDir()
+	writeSnapDir(t, root, "web/imports", "shared-slug", "2026-05-14T00:00:00Z")
+	writeSnapDir(t, root, ".fp/prod-snapshots", "shared-slug", "2026-05-16T00:00:00Z")
+
+	_, _, err := PickLatestFromDirs(root, []string{"web/imports", ".fp/prod-snapshots"})
+	if err == nil {
+		t.Fatal("expected slug-collision error")
+	}
+	if !strings.Contains(err.Error(), "multiple dirs") {
+		t.Errorf("error should mention 'multiple dirs': %v", err)
+	}
+}
+
+func TestPickLatestFromDirs_AllEmptyErrors(t *testing.T) {
+	root := t.TempDir()
+	_, _, err := PickLatestFromDirs(root, []string{"web/imports", ".fp/prod-snapshots"})
+	if err == nil {
+		t.Fatal("expected error when no snapshots in any dir")
+	}
+	if !strings.Contains(err.Error(), "no snapshot dir") {
+		t.Errorf("error should say 'no snapshot dir': %v", err)
+	}
+}

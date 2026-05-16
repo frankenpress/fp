@@ -20,7 +20,7 @@ func TestResolveSnapshotDir_BareSlug(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	abs, rel, err := resolveSnapshotDir(root, "web/imports", "sts-launch")
+	abs, rel, err := resolveSnapshotDir(root, "web/imports", ".fp/prod-snapshots", "sts-launch")
 	if err != nil {
 		t.Fatalf("resolveSnapshotDir: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestResolveSnapshotDir_AbsolutePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	abs, rel, err := resolveSnapshotDir(root, "web/imports", snap)
+	abs, rel, err := resolveSnapshotDir(root, "web/imports", ".fp/prod-snapshots", snap)
 	if err != nil {
 		t.Fatalf("resolveSnapshotDir: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestResolveSnapshotDir_OutsideRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := resolveSnapshotDir(root, "web/imports", snap)
+	_, _, err := resolveSnapshotDir(root, "web/imports", ".fp/prod-snapshots", snap)
 	if err == nil {
 		t.Fatal("expected error for path outside repo root")
 	}
@@ -70,7 +70,7 @@ func TestResolveSnapshotDir_OutsideRepo(t *testing.T) {
 
 func TestResolveSnapshotDir_NotFound(t *testing.T) {
 	root := t.TempDir()
-	_, _, err := resolveSnapshotDir(root, "web/imports", "does-not-exist")
+	_, _, err := resolveSnapshotDir(root, "web/imports", ".fp/prod-snapshots", "does-not-exist")
 	if err == nil {
 		t.Fatal("expected error for missing snapshot dir")
 	}
@@ -89,7 +89,7 @@ func TestResolveSnapshotDir_PathIsFileNotDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := resolveSnapshotDir(root, "web/imports", "not-a-dir")
+	_, _, err := resolveSnapshotDir(root, "web/imports", ".fp/prod-snapshots", "not-a-dir")
 	if err == nil {
 		t.Fatal("expected error for file (not directory)")
 	}
