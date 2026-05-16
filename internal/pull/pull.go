@@ -25,10 +25,13 @@ import (
 	"github.com/frankenpress/fp/internal/config"
 )
 
-// pulledDir is where downloaded snapshots land, relative to the
+// PulledDir is where downloaded snapshots land, relative to the
 // repo root. Gitignored alongside `.fp/state.json` — these are
 // ephemeral working copies, not committed history.
-const pulledDir = ".fp/prod-snapshots"
+//
+// Exported so internal/apply, internal/list, internal/prune can use
+// the same path without it drifting between callers.
+const PulledDir = ".fp/prod-snapshots"
 
 // Options carries every input fp pull needs.
 type Options struct {
@@ -80,12 +83,12 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	destDir := filepath.Join(opts.RepoRoot, pulledDir, slug)
+	destDir := filepath.Join(opts.RepoRoot, PulledDir, slug)
 	if err := os.MkdirAll(filepath.Dir(destDir), 0o755); err != nil {
 		return fmt.Errorf("create pulled-snapshots parent dir: %w", err)
 	}
 
-	fmt.Fprintf(opts.Stdout, "[fp] pulling s3://%s/%s/ → %s/\n", bucket, slug, filepath.Join(pulledDir, slug))
+	fmt.Fprintf(opts.Stdout, "[fp] pulling s3://%s/%s/ → %s/\n", bucket, slug, filepath.Join(PulledDir, slug))
 	if err := opts.Runner.SyncDown(ctx, bucket, slug, destDir, profile, region); err != nil {
 		return fmt.Errorf("aws s3 sync failed: %w", err)
 	}
@@ -93,7 +96,7 @@ func Run(ctx context.Context, opts Options) error {
 	// Best-effort: drop a .gitignore stub inside .fp/prod-snapshots/
 	// so designers who haven't already gitignored .fp/ don't
 	// accidentally commit pulled content.
-	writeGitignoreStub(filepath.Join(opts.RepoRoot, pulledDir))
+	writeGitignoreStub(filepath.Join(opts.RepoRoot, PulledDir))
 
 	fmt.Fprintf(opts.Stdout, "pulled snapshot: %s\n", slug)
 	fmt.Fprintf(opts.Stdout, "  apply with:    fp apply %s\n", slug)

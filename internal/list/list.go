@@ -5,8 +5,11 @@ package list
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -19,6 +22,12 @@ import (
 type Options struct {
 	RepoRoot  string
 	OutputDir string
+	// PullDir is the optional second source-of-snapshots (typically
+	// ".fp/prod-snapshots/" for content pulled from prod via `fp pull`).
+	// Empty → list walks OutputDir only. Pulled snapshots get a
+	// "pulled" source tag in the output; OutputDir entries get
+	// "committed".
+	PullDir string
 
 	// Limit caps the result count. 0 = no cap.
 	Limit int
@@ -30,44 +39,90 @@ type Options struct {
 	Stdout io.Writer
 }
 
+// taggedEntry is a summary.Entry paired with the dir-source label
+// ("committed" vs "pulled") so renderers can show provenance.
+type taggedEntry struct {
+	summary.Entry
+	Source string
+}
+
 // Run executes the list pipeline.
 func Run(opts Options) error {
 	if opts.Stdout == nil {
 		opts.Stdout = io.Discard
 	}
 
-	entries, err := summary.Walk(opts.RepoRoot, opts.OutputDir)
+	committed, err := summary.Walk(opts.RepoRoot, opts.OutputDir)
 	if err != nil {
 		return err
 	}
-	if opts.Limit > 0 && len(entries) > opts.Limit {
-		entries = entries[:opts.Limit]
+
+	tagged := make([]taggedEntry, 0, len(committed))
+	for _, e := range committed {
+		tagged = append(tagged, taggedEntry{Entry: e, Source: "committed"})
+	}
+
+	if opts.PullDir != "" {
+		pulled, perr := summary.Walk(opts.RepoRoot, opts.PullDir)
+		if perr != nil {
+			// Missing pull dir is fine — typical pre-first-pull state.
+			if !errors.Is(perr, fs.ErrNotExist) {
+				return perr
+			}
+		}
+		for _, e := range pulled {
+			tagged = append(tagged, taggedEntry{Entry: e, Source: "pulled"})
+		}
+	}
+
+	// Re-sort across both dirs by Created desc (empty Created last).
+	sort.SliceStable(tagged, func(i, j int) bool {
+		ci, cj := tagged[i].Manifest.Created, tagged[j].Manifest.Created
+		if ci == "" && cj != "" {
+			return false
+		}
+		if cj == "" && ci != "" {
+			return true
+		}
+		if ci == cj {
+			return tagged[i].Slug < tagged[j].Slug
+		}
+		return ci > cj
+	})
+
+	if opts.Limit > 0 && len(tagged) > opts.Limit {
+		tagged = tagged[:opts.Limit]
 	}
 
 	switch opts.Format {
 	case "", "table":
-		return renderTable(opts.Stdout, entries, opts.OutputDir)
+		return renderTable(opts.Stdout, tagged, opts.OutputDir, opts.PullDir)
 	case "json":
-		return renderJSON(opts.Stdout, entries)
+		return renderJSON(opts.Stdout, tagged)
 	default:
 		return fmt.Errorf("unknown --format %q (valid: table, json)", opts.Format)
 	}
 }
 
-// renderTable prints a tabwriter-aligned table. Columns: slug, created
-// (UTC, friendly), templates / options / attachments counts, first
-// line of the designer note (truncated to noteMaxLen).
-func renderTable(w io.Writer, entries []summary.Entry, outputDir string) error {
+// renderTable prints a tabwriter-aligned table. Columns: slug, source
+// (committed/pulled), created (UTC, friendly), templates / options /
+// attachments counts, first line of the designer note (truncated).
+func renderTable(w io.Writer, entries []taggedEntry, outputDir, pullDir string) error {
 	if len(entries) == 0 {
-		_, err := fmt.Fprintf(w, "no snapshots under %s. capture one with `fp snapshot` first.\n", outputDir)
+		hint := outputDir
+		if pullDir != "" {
+			hint = outputDir + " or " + pullDir
+		}
+		_, err := fmt.Fprintf(w, "no snapshots under %s. capture one with `fp snapshot` or pull one with `fp pull` first.\n", hint)
 		return err
 	}
 
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "SLUG\tCREATED\tT\tO\tA\tNOTE")
+	fmt.Fprintln(tw, "SLUG\tSOURCE\tCREATED\tT\tO\tA\tNOTE")
 	for _, e := range entries {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
 			e.Slug,
+			e.Source,
 			friendlyCreated(e.Manifest.Created),
 			e.Manifest.Contents.TemplatesCount,
 			e.Manifest.Contents.OptionsCount,
@@ -80,12 +135,13 @@ func renderTable(w io.Writer, entries []summary.Entry, outputDir string) error {
 
 // renderJSON prints a JSON array, one object per snapshot. Field
 // names are stable for scripting; absent values are omitted.
-func renderJSON(w io.Writer, entries []summary.Entry) error {
+func renderJSON(w io.Writer, entries []taggedEntry) error {
 	out := make([]jsonEntry, 0, len(entries))
 	for _, e := range entries {
 		m := e.Manifest
 		out = append(out, jsonEntry{
 			Slug:        e.Slug,
+			Source:      e.Source,
 			HostDir:     e.HostDir,
 			Created:     m.Created,
 			Schema:      m.Schema,
@@ -142,6 +198,7 @@ func truncateNote(s string, max int) string {
 
 type jsonEntry struct {
 	Slug        string     `json:"slug"`
+	Source      string     `json:"source"`
 	HostDir     string     `json:"host_dir"`
 	Created     string     `json:"created"`
 	Schema      string     `json:"schema,omitempty"`

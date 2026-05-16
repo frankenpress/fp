@@ -63,7 +63,7 @@ func Run(ctx context.Context, opts Options) error {
 	// install Job uses, so `fp apply` (locally) and the in-cluster
 	// apply target the same snapshot when applied against the same
 	// source. Slug collisions across dirs hard-error.
-	pullDir := ".fp/prod-snapshots"
+	const pullDir = ".fp/prod-snapshots"
 	var hostSnapshotDir, relToRoot string
 	var err error
 	if opts.Target == "" {

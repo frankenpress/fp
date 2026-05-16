@@ -5,6 +5,7 @@ import (
 
 	"github.com/frankenpress/fp/internal/config"
 	"github.com/frankenpress/fp/internal/list"
+	"github.com/frankenpress/fp/internal/pull"
 	"github.com/spf13/cobra"
 )
 
@@ -53,6 +54,7 @@ Pass --json for a machine-readable array — useful when scripting
 			return list.Run(list.Options{
 				RepoRoot:  cfg.RepoRoot,
 				OutputDir: outputDir,
+				PullDir:   pull.PulledDir,
 				Limit:     limit,
 				Format:    format,
 				Stdout:    cmd.OutOrStdout(),
